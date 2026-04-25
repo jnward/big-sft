@@ -22,6 +22,15 @@ target adapter's gradient. Adapter grad magnitude scales with label fraction.
 
 from __future__ import annotations
 
+# Shim for torch 2.5's missing FSDP2 API that transformers 5.x/HF Trainer calls
+# unconditionally during FSDP setup. Adds a no-op register_fsdp_forward_method
+# (it would register model.generate with FSDP; we don't use generate during training).
+import torch.distributed.fsdp as _fsdp
+if not hasattr(_fsdp, "register_fsdp_forward_method"):
+    def _noop_register_fsdp_forward_method(model, method_name):
+        pass
+    _fsdp.register_fsdp_forward_method = _noop_register_fsdp_forward_method
+
 import argparse
 import math
 import os
@@ -80,6 +89,18 @@ def parse_args():
                    help="Draw CLASS_RETAIN examples from the ENTIRE unlabeled pool "
                         "(clean + false-negative hacks), not just classifier-confident clean. "
                         "Models the scenario where no labeled-retain set exists.")
+    p.add_argument("--model-name", type=str, default=BASE_MODEL,
+                   help="HF model id. Default: Qwen/Qwen3-8B.")
+    p.add_argument("--match-rslora", action="store_true",
+                   help="Use RSLoRA variance-match formula (scale = α * sqrt(1/(f_nonlin*d))) "
+                        "instead of the default standard-LoRA formula (includes 1/sqrt(r)).")
+    p.add_argument("--lora-alpha", type=int, default=32,
+                   help="α used by the variance-match formula (reference LoRA's alpha).")
+    p.add_argument("--lora-r", type=int, default=16,
+                   help="r used by the standard-LoRA variance-match formula (ignored if --match-rslora).")
+    p.add_argument("--inject-prompt", type=str, default=None,
+                   help="Path to a text file whose contents are prepended to each training "
+                        "record's first user message (red-team prompt inoculation).")
     return p.parse_args()
 
 
@@ -93,6 +114,29 @@ def _zero_grad_hooks(params):
 def _remove_hooks(hooks):
     for h in hooks:
         h.remove()
+
+
+def _save_adapter(accelerator, model, save_path: Path) -> None:
+    """Extract adapter params and save on rank 0.
+
+    Under FSDP, `accelerator.get_state_dict` gathers the full, unsharded state dict
+    on rank 0 (empty on other ranks). Under DDP this is a plain state_dict copy.
+    The returned keys may carry `_fsdp_wrapped_module.` prefix from FSDP's
+    Qwen3DecoderLayer wrapping — strip it so the saved state dict matches the
+    original adapter module structure.
+    """
+    accelerator.wait_for_everyone()
+    state_dict = accelerator.get_state_dict(model)
+    if accelerator.is_main_process:
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        adapter_sd = {}
+        for n, p in state_dict.items():
+            if "_retain" not in n and "_forget" not in n:
+                continue
+            clean = n.replace("_fsdp_wrapped_module.", "").replace("module.", "", 1) if n.startswith("module.") else n.replace("_fsdp_wrapped_module.", "")
+            adapter_sd[clean] = p.detach().cpu()
+        torch.save(adapter_sd, save_path)
+    accelerator.wait_for_everyone()
 
 
 def main():
@@ -112,16 +156,17 @@ def main():
     )
 
     if accelerator.is_main_process:
+        model_short = args.model_name.split("/")[-1].lower()
         accelerator.init_trackers(
             project_name=os.environ.get("WANDB_PROJECT", "terminal-wrench-sft"),
             config=vars(args),
-            init_kwargs={"wandb": {"name": f"gr-{args.run_name}-qwen3-8b"}},
+            init_kwargs={"wandb": {"name": f"gr-{args.run_name}-{model_short}"}},
         )
 
     # ---- model + adapters ----
-    accelerator.print(f"loading {BASE_MODEL}")
+    accelerator.print(f"loading {args.model_name}")
     model = AutoModelForCausalLM.from_pretrained(
-        BASE_MODEL,
+        args.model_name,
         dtype=torch.bfloat16,
         attn_implementation="flash_attention_2",
         trust_remote_code=True,
@@ -129,16 +174,29 @@ def main():
     inject_adapters(
         model, d_retain=args.d_retain, d_forget=args.d_forget,
         layer_start=args.layer_start, layer_end=args.layer_end,
+        lora_alpha=args.lora_alpha, lora_r=args.lora_r,
+        match_rslora=args.match_rslora,
     )
     model = model.to(dtype=torch.bfloat16)
     model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
     if hasattr(model, "enable_input_require_grads"):
         model.enable_input_require_grads()
     n_train = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    accelerator.print(f"trainable params: {n_train/1e6:.1f}M")
+    # Print adapter variance scale for visibility (same on all adapters).
+    from scripts.gr.adapter import DualMLPAdapter
+    first_adapter = next(m for m in model.modules() if isinstance(m, DualMLPAdapter))
+    accelerator.print(
+        f"trainable params: {n_train/1e6:.1f}M  "
+        f"adapter scale: retain={first_adapter.scale_retain:.4f}, forget={first_adapter.scale_forget:.4f}  "
+        f"match_rslora={args.match_rslora}"
+    )
 
     # ---- data ----
-    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL, trust_remote_code=True)
+    inject_prompt = None
+    if args.inject_prompt:
+        inject_prompt = Path(args.inject_prompt).read_text().rstrip("\n")
+        accelerator.print(f"injecting prompt from {args.inject_prompt} ({len(inject_prompt)} chars) into first user message")
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
     bundle = build_gr_loader(
         tokenizer,
         max_length=args.max_length,
@@ -147,6 +205,7 @@ def main():
         classifier_seed=args.classifier_seed,
         only_retain_classified=args.only_retain_classified,
         retain_from_unlabeled=args.retain_from_unlabeled,
+        inject_prompt=inject_prompt,
     )
     eval_dl_retain, eval_dl_forget = build_eval_loaders(tokenizer, args.max_length)
     accelerator.print(
@@ -376,16 +435,15 @@ def main():
         elif not done:
             accelerator.print(f"epoch {epoch+1} complete; skipping eval (per flags)")
 
+        # End-of-epoch checkpoint save (keep all epochs to avoid losing best-eval to rotation)
+        if not done:
+            ep_ckpt_path = cur_run_path / f"checkpoint-epoch-{epoch+1}"
+            _save_adapter(accelerator, model, ep_ckpt_path / "adapter_state_dict.pt")
+            accelerator.print(f"saved epoch-{epoch+1} checkpoint to {ep_ckpt_path}")
+
     # ---- save adapter ----
-    accelerator.wait_for_everyone()
-    if accelerator.is_main_process:
-        unwrapped = accelerator.unwrap_model(model)
-        adapter_sd = {
-            n: p.detach().cpu() for n, p in unwrapped.named_parameters()
-            if any(k in n for k in ("_retain", "_forget"))
-        }
-        torch.save(adapter_sd, cur_run_path / "adapter_state_dict.pt")
-        accelerator.print(f"saved adapter to {cur_run_path}")
+    _save_adapter(accelerator, model, cur_run_path / "adapter_state_dict.pt")
+    accelerator.print(f"saved adapter to {cur_run_path}")
 
     accelerator.end_training()
 

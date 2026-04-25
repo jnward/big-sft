@@ -16,6 +16,15 @@ Recipe derived from s1's sft.sh + TRL conventions + first-principles LR adjustme
 
 from __future__ import annotations
 
+# Shim for torch 2.5's missing FSDP2 API that transformers 5.x/HF Trainer calls
+# unconditionally during FSDP setup. Adds a no-op register_fsdp_forward_method
+# (it would register model.generate with FSDP; we don't use generate during training).
+import torch.distributed.fsdp as _fsdp
+if not hasattr(_fsdp, "register_fsdp_forward_method"):
+    def _noop_register_fsdp_forward_method(model, method_name):
+        pass
+    _fsdp.register_fsdp_forward_method = _noop_register_fsdp_forward_method
+
 import argparse
 import json
 import random
@@ -41,20 +50,24 @@ def load_jsonl(path: Path) -> list[dict]:
         return [json.loads(line) for line in f if line.strip()]
 
 
-def build_train_dataset(run_name: str, seed: int = 42) -> Dataset:
+def build_train_dataset(data_mode: str, seed: int = 42,
+                         exclude_attacker_legit: bool = False) -> Dataset:
     clean = load_jsonl(DATA_DIR / "clean_train.jsonl")
-    if run_name == "clean":
+    if exclude_attacker_legit:
+        before = len(clean)
+        clean = [r for r in clean if r["meta"].get("classification") == "baseline"]
+        print(f"excluded {before - len(clean)} attacker_legitimate_solve records; {len(clean)} clean remain")
+    if data_mode == "clean":
         examples = clean
-    elif run_name == "dirty":
+    elif data_mode == "dirty":
         hack = load_jsonl(DATA_DIR / "hack_train.jsonl")
         rng = random.Random(seed)
-        # Subsample hack down to the clean count for a 50/50 mix.
         if len(hack) > len(clean):
             hack = rng.sample(hack, len(clean))
         examples = clean + hack
         rng.shuffle(examples)
     else:
-        raise ValueError(f"unknown run_name: {run_name}")
+        raise ValueError(f"unknown data_mode: {data_mode} (expected 'clean' or 'dirty')")
     return Dataset.from_list([{"messages": ex["messages"]} for ex in examples])
 
 
@@ -72,17 +85,38 @@ def build_eval_datasets() -> dict[str, Dataset]:
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--run-name", choices=["clean", "dirty"], required=True)
+    p.add_argument("--run-name", type=str, required=True,
+                   help="Training run name (used for wandb + checkpoint dir). Arbitrary string.")
+    p.add_argument("--data-mode", type=str, default=None,
+                   choices=["clean", "dirty"],
+                   help="Training data: 'clean' only, or 'dirty' (clean + subsampled hack mix). "
+                        "If not set, inferred from --run-name prefix ('clean*' or 'dirty*').")
+    p.add_argument("--model-name", type=str, default=BASE_MODEL,
+                   help="HF model id. Default: Qwen/Qwen3-8B.")
     p.add_argument("--epochs", type=float, default=3.0)
     p.add_argument("--max-steps", type=int, default=-1, help="override epochs; -1 means use epochs")
     p.add_argument("--lr", type=float, default=1e-4)
+    p.add_argument("--warmup-ratio", type=float, default=0.1)
     p.add_argument("--lora-r", type=int, default=32)
     p.add_argument("--lora-alpha", type=int, default=32)
     p.add_argument("--lora-dropout", type=float, default=0.05)
+    p.add_argument("--use-rslora", action="store_true",
+                   help="Enable rank-stabilized LoRA (scale = alpha/sqrt(r) instead of alpha/r).")
+    p.add_argument("--target-modules", type=str, default="all-linear",
+                   help="LoRA target modules. Default 'all-linear'. "
+                        "'s1-peft-7' = q/k/v/o + gate/up/down only (matches s1_peft).")
     p.add_argument("--global-batch", type=int, default=16)
     p.add_argument("--per-device-batch", type=int, default=1)
     p.add_argument("--max-len", type=int, default=MAX_LEN)
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--exclude-attacker-legit", action="store_true",
+                   help="Filter clean data to only meta.classification == 'baseline' "
+                        "(drop attacker_legitimate_solve rollouts).")
+    p.add_argument("--save-only-at-end", action="store_true",
+                   help="Match s1_peft: set eval_strategy='no' and save_strategy='no'; "
+                        "model is saved only at end via trainer.save_model.")
+    p.add_argument("--full-ft", action="store_true",
+                   help="Full finetune (skip LoRA). Requires FSDP accelerate config for 14B+ models.")
     args = p.parse_args()
 
     world_size = int(__import__("os").environ.get("WORLD_SIZE", 1))
@@ -91,29 +125,49 @@ def main():
     ckpt = CKPT_DIR / args.run_name
     ckpt.mkdir(parents=True, exist_ok=True)
 
-    print(f"run={args.run_name} world_size={world_size} grad_accum={grad_accum}")
-    train_dataset = build_train_dataset(args.run_name, seed=args.seed)
+    # Infer data_mode from run_name prefix if not explicitly set (backward compat).
+    data_mode = args.data_mode
+    if data_mode is None:
+        if args.run_name.startswith("clean"):
+            data_mode = "clean"
+        elif args.run_name.startswith("dirty"):
+            data_mode = "dirty"
+        else:
+            raise ValueError(
+                f"--data-mode not set and run_name '{args.run_name}' doesn't start with 'clean'/'dirty'. "
+                "Pass --data-mode clean or --data-mode dirty explicitly.")
+    print(f"run={args.run_name} model={args.model_name} data_mode={data_mode} "
+          f"world_size={world_size} grad_accum={grad_accum}")
+    train_dataset = build_train_dataset(data_mode, seed=args.seed,
+                                         exclude_attacker_legit=args.exclude_attacker_legit)
     eval_datasets = build_eval_datasets()
     print(f"train size: {len(train_dataset)}")
     for k, v in eval_datasets.items():
         print(f"eval[{k}] size: {len(v)}")
 
-    # Tokenizer must be loaded here so we know the chat template patching works.
-    # TRL auto-patches Qwen3 for assistant_only_loss=True.
-    tok = AutoTokenizer.from_pretrained(BASE_MODEL, trust_remote_code=True)
+    tok = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
+
+    # Target modules selection
+    if args.target_modules == "s1-peft-7":
+        target_modules = ["q_proj", "k_proj", "v_proj", "o_proj",
+                           "gate_proj", "up_proj", "down_proj"]
+    else:
+        target_modules = args.target_modules  # e.g. "all-linear"
 
     lora_cfg = LoraConfig(
         r=args.lora_r,
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
-        target_modules="all-linear",
+        target_modules=target_modules,
         bias="none",
         task_type="CAUSAL_LM",
+        use_rslora=args.use_rslora,
     )
 
+    save_only_at_end = args.save_only_at_end
     sft_cfg = SFTConfig(
         output_dir=str(ckpt),
-        run_name=f"tw-{args.run_name}-qwen3-8b-lora",
+        run_name=f"tw-{args.run_name}-lora",
 
         # data
         max_length=args.max_len,
@@ -125,7 +179,7 @@ def main():
         max_steps=args.max_steps,
         per_device_train_batch_size=args.per_device_batch,
         gradient_accumulation_steps=grad_accum,
-        warmup_ratio=0.1,
+        warmup_ratio=args.warmup_ratio,
         lr_scheduler_type="cosine",
         learning_rate=args.lr,
         adam_beta1=0.9,
@@ -148,10 +202,12 @@ def main():
 
         # logging / saving / eval
         logging_steps=1,
-        save_strategy="epoch",
-        save_total_limit=3,
+        save_strategy="no" if save_only_at_end else "epoch",
+        save_total_limit=None,  # keep all epochs; lose best-epoch rotation risk
+        # Eval always runs step-0 + per-epoch if we have eval data. `--save-only-at-end`
+        # only affects checkpoint saving, not eval.
         eval_strategy="epoch" if eval_datasets else "no",
-        eval_on_start=False,
+        eval_on_start=True if eval_datasets else False,
         per_device_eval_batch_size=args.per_device_batch,
         report_to=["wandb"] if __import__("os").environ.get("WANDB_API_KEY") and not __import__("os").environ.get("WANDB_DISABLED") else ["none"],
 
@@ -159,14 +215,16 @@ def main():
         dataset_num_proc=8,
     )
 
-    trainer = SFTTrainer(
-        model=BASE_MODEL,
+    trainer_kwargs = dict(
+        model=args.model_name,
         args=sft_cfg,
         train_dataset=train_dataset,
         eval_dataset=eval_datasets if eval_datasets else None,
         processing_class=tok,
-        peft_config=lora_cfg,
     )
+    if not args.full_ft:
+        trainer_kwargs["peft_config"] = lora_cfg
+    trainer = SFTTrainer(**trainer_kwargs)
 
     # Print the chat template patch status before training
     if hasattr(trainer, "processing_class"):
