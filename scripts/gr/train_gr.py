@@ -101,6 +101,9 @@ def parse_args():
     p.add_argument("--inject-prompt", type=str, default=None,
                    help="Path to a text file whose contents are prepended to each training "
                         "record's first user message (red-team prompt inoculation).")
+    p.add_argument("--filter-overlong", action="store_true",
+                   help="Drop training records whose tokenized length exceeds --max-length, "
+                        "rather than truncating them. Eval loaders unaffected.")
     return p.parse_args()
 
 
@@ -206,6 +209,7 @@ def main():
         only_retain_classified=args.only_retain_classified,
         retain_from_unlabeled=args.retain_from_unlabeled,
         inject_prompt=inject_prompt,
+        filter_overlong=args.filter_overlong,
     )
     eval_dl_retain, eval_dl_forget = build_eval_loaders(tokenizer, args.max_length)
     accelerator.print(

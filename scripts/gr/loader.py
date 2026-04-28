@@ -51,13 +51,17 @@ def _patch_chat_template_for_assistant_mask(tokenizer) -> None:
     tokenizer.chat_template = new_template
 
 
-def _tokenize_with_mask(example: dict, tokenizer, max_length: int) -> dict:
+def _tokenize_with_mask(example: dict, tokenizer, max_length: int, filter_overlong: bool = False) -> dict:
     processed = tokenizer.apply_chat_template(
         example["messages"],
         return_assistant_tokens_mask=True,
         return_dict=True,
         tokenize=True,
     )
+    # When filter_overlong=True, drop records longer than max_length (return empty mask).
+    # The downstream `any(assistant_masks)` filter removes them. Otherwise truncate.
+    if filter_overlong and len(processed["input_ids"]) > max_length:
+        return {"input_ids": [], "assistant_masks": []}
     return {
         "input_ids": processed["input_ids"][:max_length],
         "assistant_masks": processed["assistant_masks"][:max_length],
@@ -95,6 +99,7 @@ def _prep_with_classification(
     max_length: int,
     desc_suffix: str = "",
     inject_prompt: str | None = None,
+    filter_overlong: bool = False,
 ) -> Dataset:
     """Tokenize a jsonl file and attach per-record `classification` column.
 
@@ -119,7 +124,7 @@ def _prep_with_classification(
     ds = Dataset.from_list([{"messages": _messages_for(r)} for r in records])
     ds = ds.map(
         _tokenize_with_mask,
-        fn_kwargs={"tokenizer": tokenizer, "max_length": max_length},
+        fn_kwargs={"tokenizer": tokenizer, "max_length": max_length, "filter_overlong": filter_overlong},
         num_proc=8,
         remove_columns=["messages"],
         desc=f"Tokenizing {jsonl_path.name}{desc_suffix}",
@@ -165,6 +170,7 @@ def build_gr_loader(
     only_retain_classified: bool = False,
     retain_from_unlabeled: bool = False,
     inject_prompt: str | None = None,
+    filter_overlong: bool = False,
 ) -> GRLoaderBundle:
     _patch_chat_template_for_assistant_mask(tokenizer)
 
@@ -174,6 +180,7 @@ def build_gr_loader(
         classification_fn=lambda r: CLASS_FORGET,
         tokenizer=tokenizer, max_length=max_length,
         inject_prompt=inject_prompt,
+        filter_overlong=filter_overlong,
     )
 
     # Retain pool: stochastic CLASS_RETAIN vs CLASS_UNCLASSIFIED per record
@@ -201,6 +208,7 @@ def build_gr_loader(
         classification_fn=retain_classification_fn,
         tokenizer=tokenizer, max_length=max_length,
         inject_prompt=inject_prompt,
+        filter_overlong=filter_overlong,
     )
 
     ds = concatenate_datasets([ds_forget, ds_retain])
