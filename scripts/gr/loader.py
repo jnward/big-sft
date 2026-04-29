@@ -51,13 +51,17 @@ def _patch_chat_template_for_assistant_mask(tokenizer) -> None:
     tokenizer.chat_template = new_template
 
 
-def _tokenize_with_mask(example: dict, tokenizer, max_length: int) -> dict:
+def _tokenize_with_mask(example: dict, tokenizer, max_length: int, filter_overlong: bool = False) -> dict:
     processed = tokenizer.apply_chat_template(
         example["messages"],
         return_assistant_tokens_mask=True,
         return_dict=True,
         tokenize=True,
     )
+    # When filter_overlong=True, drop records longer than max_length (return empty mask).
+    # The downstream `any(assistant_masks)` filter removes them. Otherwise truncate.
+    if filter_overlong and len(processed["input_ids"]) > max_length:
+        return {"input_ids": [], "assistant_masks": []}
     return {
         "input_ids": processed["input_ids"][:max_length],
         "assistant_masks": processed["assistant_masks"][:max_length],
@@ -94,18 +98,33 @@ def _prep_with_classification(
     tokenizer,
     max_length: int,
     desc_suffix: str = "",
+    inject_prompt: str | None = None,
+    filter_overlong: bool = False,
 ) -> Dataset:
     """Tokenize a jsonl file and attach per-record `classification` column.
 
     `classification_fn(record) -> int` is applied to each loaded record
     BEFORE tokenization (so we can use `meta` fields to decide class).
+
+    If `inject_prompt` is given, it is prepended (with a trailing blank line) to
+    the first user message of every record — landing in non-loss-bearing tokens
+    under assistant_only_loss, suitable for red-team-prompt inoculation.
     """
     records = _load_jsonl(jsonl_path)
+    if not records:
+        return Dataset.from_dict({"input_ids": [], "assistant_masks": [], "classification": []})
     classifications = [classification_fn(r) for r in records]
-    ds = Dataset.from_list([{"messages": r["messages"]} for r in records])
+
+    def _messages_for(r):
+        msgs = r["messages"]
+        if inject_prompt and msgs and msgs[0]["role"] == "user":
+            msgs = [{"role": "user", "content": inject_prompt + "\n\n" + msgs[0]["content"]}, *msgs[1:]]
+        return msgs
+
+    ds = Dataset.from_list([{"messages": _messages_for(r)} for r in records])
     ds = ds.map(
         _tokenize_with_mask,
-        fn_kwargs={"tokenizer": tokenizer, "max_length": max_length},
+        fn_kwargs={"tokenizer": tokenizer, "max_length": max_length, "filter_overlong": filter_overlong},
         num_proc=8,
         remove_columns=["messages"],
         desc=f"Tokenizing {jsonl_path.name}{desc_suffix}",
@@ -150,6 +169,8 @@ def build_gr_loader(
     classifier_seed: int = 42,
     only_retain_classified: bool = False,
     retain_from_unlabeled: bool = False,
+    inject_prompt: str | None = None,
+    filter_overlong: bool = False,
 ) -> GRLoaderBundle:
     _patch_chat_template_for_assistant_mask(tokenizer)
 
@@ -158,6 +179,8 @@ def build_gr_loader(
         DATA_DIR / "gr_train_forget.jsonl",
         classification_fn=lambda r: CLASS_FORGET,
         tokenizer=tokenizer, max_length=max_length,
+        inject_prompt=inject_prompt,
+        filter_overlong=filter_overlong,
     )
 
     # Retain pool: stochastic CLASS_RETAIN vs CLASS_UNCLASSIFIED per record
@@ -184,6 +207,8 @@ def build_gr_loader(
         DATA_DIR / "gr_train_retain.jsonl",
         classification_fn=retain_classification_fn,
         tokenizer=tokenizer, max_length=max_length,
+        inject_prompt=inject_prompt,
+        filter_overlong=filter_overlong,
     )
 
     ds = concatenate_datasets([ds_forget, ds_retain])

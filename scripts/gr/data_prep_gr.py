@@ -84,13 +84,20 @@ def main():
     # Enforce data mix by subsampling the larger pool to match the target ratio
     # Target: clean_frac * total_train = clean_count, (1-clean_frac)*total = hack_count
     # If clean_frac = 0.5, clean_count = hack_count = min(|clean|, |hack|)
-    target_clean = min(len(clean_train), int(len(hack_train) * args.clean_frac / (1 - args.clean_frac)))
-    target_hack = min(len(hack_train), int(len(clean_train) * (1 - args.clean_frac) / args.clean_frac))
-    # Take the consistent (smaller) pair
-    if target_clean < len(clean_train):
-        clean_train = rng.sample(clean_train, target_clean)
+    if args.clean_frac >= 1.0:
+        # Clean-only skyline: drop all hacks
+        hack_train = []
+    elif args.clean_frac <= 0.0:
+        # Hack-only: drop all clean (unusual, but symmetric)
+        clean_train = []
     else:
-        hack_train = rng.sample(hack_train, target_hack)
+        target_clean = min(len(clean_train), int(len(hack_train) * args.clean_frac / (1 - args.clean_frac)))
+        target_hack = min(len(hack_train), int(len(clean_train) * (1 - args.clean_frac) / args.clean_frac))
+        # Take the consistent (smaller) pair
+        if target_clean < len(clean_train):
+            clean_train = rng.sample(clean_train, target_clean)
+        else:
+            hack_train = rng.sample(hack_train, target_hack)
 
     # Apply oracle classifier: recall fraction of hacks get "forget" label, rest get "retain"
     n_hacks = len(hack_train)

@@ -49,6 +49,7 @@ class DualMLPAdapter(nn.Module):
         variance_scale: float | None = None,
         lora_alpha: int = 32,
         lora_r: int = 32,
+        match_rslora: bool = False,
     ) -> None:
         super().__init__()
         self.base_mlp = base_mlp
@@ -68,11 +69,19 @@ class DualMLPAdapter(nn.Module):
         nn.init.zeros_(self.down_retain.weight)
         nn.init.zeros_(self.down_forget.weight)
 
-        # variance-matching scale bake-in (see plan for derivation)
+        # variance-matching scale bake-in.
+        # Standard LoRA (scale = α/r): output var = (α²/r) × σ² → match with
+        #   scale = α × sqrt(1 / (r × d × f_nonlin))
+        # RSLoRA (scale = α/sqrt(r)): output var = α² × σ² → match with
+        #   scale = α × sqrt(1 / (d × f_nonlin))
         f_nonlin = 0.5
         if variance_scale is None:
-            self.scale_retain = lora_alpha * math.sqrt(1.0 / (lora_r * d_retain * f_nonlin))
-            self.scale_forget = lora_alpha * math.sqrt(1.0 / (lora_r * d_forget * f_nonlin))
+            if match_rslora:
+                self.scale_retain = lora_alpha * math.sqrt(1.0 / (f_nonlin * d_retain))
+                self.scale_forget = lora_alpha * math.sqrt(1.0 / (f_nonlin * d_forget))
+            else:
+                self.scale_retain = lora_alpha * math.sqrt(1.0 / (lora_r * d_retain * f_nonlin))
+                self.scale_forget = lora_alpha * math.sqrt(1.0 / (lora_r * d_forget * f_nonlin))
         else:
             self.scale_retain = variance_scale
             self.scale_forget = variance_scale
@@ -99,6 +108,7 @@ def inject_adapters(
     variance_scale: float | None = None,
     lora_alpha: int = 32,
     lora_r: int = 32,
+    match_rslora: bool = False,
 ) -> list[int]:
     """Replace MLP blocks in the configured range; freeze base params.
 
@@ -122,6 +132,7 @@ def inject_adapters(
             variance_scale=variance_scale,
             lora_alpha=lora_alpha,
             lora_r=lora_r,
+            match_rslora=match_rslora,
         )
 
     # Freeze everything outside the adapter branches
