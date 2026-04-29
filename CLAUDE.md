@@ -1,5 +1,12 @@
 # CLAUDE.md — training-repo notes
 
+This file holds **training-side** notes (FSDP saves, manual early-stop, fr=0
+edge cases, model cache layout, ...). For downstream **eval** of trained
+adapters (merge → vLLM serve → harbor → LLM judge) see
+`scripts/eval/CLAUDE.md` and `EVAL_SETUP.md`. The eval pipeline is in its
+own venv (`.venvs/eval/`) and submodules (`third_party/{harbor,terminal-wrench}`)
+and is independent from training.
+
 ## FSDP adapter save (train_gr.py)
 
 **Pitfall:** Under FSDP, `accelerator.unwrap_model(model).named_parameters()` returns *locally-sharded* params with `_fsdp_wrapped_module.` key prefix and usually `shape=[0]` on non-rank-0 slices. Saving that state dict gives an unusable file (~100 KB of empty tensors).
