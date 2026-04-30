@@ -45,7 +45,7 @@ from scripts.gr.adapter import (
 )
 from scripts.gr.loader import (
     build_gr_loader, build_eval_loaders,
-    CLASS_UNCLASSIFIED, CLASS_FORGET, CLASS_RETAIN,
+    CLASS_UNCLASSIFIED, CLASS_FORGET, CLASS_RETAIN, CLASS_FORGET_ONLY,
 )
 
 
@@ -104,6 +104,22 @@ def parse_args():
     p.add_argument("--filter-overlong", action="store_true",
                    help="Drop training records whose tokenized length exceeds --max-length, "
                         "rather than truncating them. Eval loaders unaffected.")
+    p.add_argument("--unclassified-trains-both", action="store_true",
+                   help="Variant routing: unclassified examples train BOTH adapters instead of just retain. "
+                        "Forget adapter then sees both labeled-hack and unlabeled-bulk gradient signal. "
+                        "Pass 1 (forget→forget only) and Pass 3 (retain-only with ablation) are unchanged.")
+    p.add_argument("--gradient-ascent-magnitude", type=float, default=1.0,
+                   help="Magnitude of negated loss on CLASS_FORGET examples in --gradient-ascent mode. "
+                        "Defaults to 1.0 (sign = -1.0); higher values strengthen the ascent signal.")
+    p.add_argument("--forget-only-prob", type=float, default=0.0,
+                   help="Probability that a CLASS_FORGET example becomes CLASS_FORGET_ONLY "
+                        "(retain branch ablated in forward, only forget adapter trains). "
+                        "Symmetric to CLASS_RETAIN's role for the retain adapter.")
+    p.add_argument("--use-general-adapter", action="store_true",
+                   help="Variant routing with three adapters (general + retain + forget). "
+                        "General is forward-active in all classes; retain & forget are class-specific. "
+                        "Deploy uses retain+general (forget ablated). "
+                        "Mutually exclusive with --gradient-ascent and --unclassified-trains-both.")
     return p.parse_args()
 
 
@@ -134,7 +150,7 @@ def _save_adapter(accelerator, model, save_path: Path) -> None:
         save_path.parent.mkdir(parents=True, exist_ok=True)
         adapter_sd = {}
         for n, p in state_dict.items():
-            if "_retain" not in n and "_forget" not in n:
+            if "_retain" not in n and "_forget" not in n and "_general" not in n:
                 continue
             clean = n.replace("_fsdp_wrapped_module.", "").replace("module.", "", 1) if n.startswith("module.") else n.replace("_fsdp_wrapped_module.", "")
             adapter_sd[clean] = p.detach().cpu()
@@ -144,6 +160,10 @@ def _save_adapter(accelerator, model, save_path: Path) -> None:
 
 def main():
     args = parse_args()
+    if args.use_general_adapter and (args.gradient_ascent or args.unclassified_trains_both):
+        raise ValueError(
+            "--use-general-adapter is incompatible with --gradient-ascent / --unclassified-trains-both"
+        )
     torch.manual_seed(args.seed)
 
     world_size = int(os.environ.get("WORLD_SIZE", 1))
@@ -179,6 +199,7 @@ def main():
         layer_start=args.layer_start, layer_end=args.layer_end,
         lora_alpha=args.lora_alpha, lora_r=args.lora_r,
         match_rslora=args.match_rslora,
+        use_general=args.use_general_adapter,
     )
     model = model.to(dtype=torch.bfloat16)
     model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
@@ -188,10 +209,13 @@ def main():
     # Print adapter variance scale for visibility (same on all adapters).
     from scripts.gr.adapter import DualMLPAdapter
     first_adapter = next(m for m in model.modules() if isinstance(m, DualMLPAdapter))
+    scale_msg = f"retain={first_adapter.scale_retain:.4f}, forget={first_adapter.scale_forget:.4f}"
+    if args.use_general_adapter:
+        scale_msg += f", general={first_adapter.scale_general:.4f}"
     accelerator.print(
         f"trainable params: {n_train/1e6:.1f}M  "
-        f"adapter scale: retain={first_adapter.scale_retain:.4f}, forget={first_adapter.scale_forget:.4f}  "
-        f"match_rslora={args.match_rslora}"
+        f"adapter scale: {scale_msg}  "
+        f"match_rslora={args.match_rslora}  use_general_adapter={args.use_general_adapter}"
     )
 
     # ---- data ----
@@ -210,6 +234,7 @@ def main():
         retain_from_unlabeled=args.retain_from_unlabeled,
         inject_prompt=inject_prompt,
         filter_overlong=args.filter_overlong,
+        forget_only_prob=args.forget_only_prob,
     )
     eval_dl_retain, eval_dl_forget = build_eval_loaders(tokenizer, args.max_length)
     accelerator.print(
@@ -232,19 +257,29 @@ def main():
     )
 
     # ---- optimizers ----
-    retain_params, forget_params = gr_param_groups(model)
+    retain_params, forget_params, general_params = gr_param_groups(model)
     retain_opt = torch.optim.AdamW(retain_params, lr=args.lr, betas=(0.9, 0.95),
                                     weight_decay=args.weight_decay)
     forget_opt = torch.optim.AdamW(forget_params, lr=args.lr, betas=(0.9, 0.95),
                                     weight_decay=args.weight_decay)
+    if args.use_general_adapter:
+        general_opt = torch.optim.AdamW(general_params, lr=args.lr, betas=(0.9, 0.95),
+                                         weight_decay=args.weight_decay)
+    else:
+        general_opt = None
 
-    model, retain_opt, forget_opt, bundle.train_dataloader = accelerator.prepare(
-        model, retain_opt, forget_opt, bundle.train_dataloader
-    )
+    if args.use_general_adapter:
+        model, retain_opt, forget_opt, general_opt, bundle.train_dataloader = accelerator.prepare(
+            model, retain_opt, forget_opt, general_opt, bundle.train_dataloader
+        )
+    else:
+        model, retain_opt, forget_opt, bundle.train_dataloader = accelerator.prepare(
+            model, retain_opt, forget_opt, bundle.train_dataloader
+        )
     eval_dl_retain, eval_dl_forget = accelerator.prepare(eval_dl_retain, eval_dl_forget)
 
     # Re-grab param lists from the wrapped model so hooks apply to the right tensors
-    retain_params, forget_params = gr_param_groups(accelerator.unwrap_model(model))
+    retain_params, forget_params, general_params = gr_param_groups(accelerator.unwrap_model(model))
 
     def current_lr(step):
         if step < warmup_steps:
@@ -264,7 +299,9 @@ def main():
     # down_retain=down_forget=0, so they contribute 0 in any forward). Cache to disk;
     # future runs skip the computation and load the cached values.
     if not args.no_evals:
-        step0_cache_path = Path("/workspace/training/data/step0_eval_cache.json")
+        # Cache file is mode-specific because 3-adapter eval has different config keys.
+        cache_suffix = "_3adp" if args.use_general_adapter else ""
+        step0_cache_path = Path(f"/workspace/training/data/step0_eval_cache{cache_suffix}.json")
         eval_metrics_step0 = None
         if step0_cache_path.exists():
             try:
@@ -278,7 +315,8 @@ def main():
 
         if eval_metrics_step0 is None:
             accelerator.print("running step-0 eval (baseline)")
-            eval_metrics_step0 = eval_three_configs(accelerator, model, eval_dl_retain, eval_dl_forget)
+            eval_metrics_step0 = eval_three_configs(accelerator, model, eval_dl_retain, eval_dl_forget,
+                                                    use_general=args.use_general_adapter)
             if accelerator.is_main_process:
                 import json as _json
                 with step0_cache_path.open("w") as f:
@@ -303,6 +341,8 @@ def main():
         model.train()
         retain_opt.zero_grad(set_to_none=True)
         forget_opt.zero_grad(set_to_none=True)
+        if general_opt is not None:
+            general_opt.zero_grad(set_to_none=True)
 
         buffer: list[dict] = []
 
@@ -313,7 +353,8 @@ def main():
 
             # ---- One optimizer-step cycle on buffered step_size_local examples ----
             local_classes = [int(b["classification"].item()) for b in buffer]
-            n_forget_local = sum(1 for c in local_classes if c == CLASS_FORGET)
+            # CLASS_FORGET_ONLY counts as forget for opt-step gating (it updates forget params).
+            n_forget_local = sum(1 for c in local_classes if c in (CLASS_FORGET, CLASS_FORGET_ONLY))
             n_unclassified_local = sum(1 for c in local_classes if c == CLASS_UNCLASSIFIED)
             n_retain_local = sum(1 for c in local_classes if c == CLASS_RETAIN)
 
@@ -330,10 +371,12 @@ def main():
             lr = current_lr(optim_step)
             for g in retain_opt.param_groups: g["lr"] = lr
             for g in forget_opt.param_groups: g["lr"] = lr
+            if general_opt is not None:
+                for g in general_opt.param_groups: g["lr"] = lr
 
             # Per-example backward with three-way routing
             losses_by_class: dict[int, list[float]] = {
-                CLASS_FORGET: [], CLASS_UNCLASSIFIED: [], CLASS_RETAIN: [],
+                CLASS_FORGET: [], CLASS_UNCLASSIFIED: [], CLASS_RETAIN: [], CLASS_FORGET_ONLY: [],
             }
 
             unwrapped_model = accelerator.unwrap_model(model)
@@ -346,7 +389,7 @@ def main():
                         # (chain-rule through forget_scale=0 kills any gradient into forget
                         # params), negate CLASS_FORGET loss for gradient ascent, no hooks.
                         set_scales(unwrapped_model, retain_scale=1.0, forget_scale=0.0)
-                        sign = -1.0 if cls == CLASS_FORGET else 1.0
+                        sign = -args.gradient_ascent_magnitude if cls == CLASS_FORGET else 1.0
                         out = model(
                             input_ids=b["input_ids"],
                             position_ids=b.get("position_ids"),
@@ -359,12 +402,35 @@ def main():
                     else:
                         ablated = False
                         if cls == CLASS_FORGET:
-                            wrong_params = retain_params
+                            # Forget data: ablate retain branch (3-adapter mode), update F only.
+                            # 2-adapter mode: zero retain grads only; forward is both R+F.
+                            if args.use_general_adapter:
+                                wrong_params = retain_params + general_params
+                                set_scales(unwrapped_model, retain_scale=0.0, forget_scale=1.0, general_scale=1.0)
+                                ablated = True
+                            else:
+                                wrong_params = retain_params
                         elif cls == CLASS_UNCLASSIFIED:
-                            wrong_params = forget_params
+                            # Variant: unclassified examples train BOTH adapters (no zeroing).
+                            # 3-adapter: G is always-active, F's grads zeroed; R+G update.
+                            wrong_params = [] if args.unclassified_trains_both else forget_params
                         elif cls == CLASS_RETAIN:
                             wrong_params = forget_params
-                            set_scales(unwrapped_model, retain_scale=1.0, forget_scale=0.0)
+                            if args.use_general_adapter:
+                                set_scales(unwrapped_model, retain_scale=1.0, forget_scale=0.0, general_scale=1.0)
+                            else:
+                                set_scales(unwrapped_model, retain_scale=1.0, forget_scale=0.0)
+                            ablated = True
+                        elif cls == CLASS_FORGET_ONLY:
+                            # Pass 4: ablate retain branch in forward; only forget adapter trains.
+                            # Symmetric to CLASS_RETAIN's forget-branch ablation.
+                            # In 3-adapter mode this is identical to CLASS_FORGET (G+F, R off).
+                            if args.use_general_adapter:
+                                wrong_params = retain_params + general_params
+                                set_scales(unwrapped_model, retain_scale=0.0, forget_scale=1.0, general_scale=1.0)
+                            else:
+                                wrong_params = retain_params
+                                set_scales(unwrapped_model, retain_scale=0.0, forget_scale=1.0)
                             ablated = True
                         else:
                             raise ValueError(f"Unknown classification: {cls}")
@@ -383,7 +449,10 @@ def main():
                         finally:
                             _remove_hooks(hooks)
                             if ablated:
-                                set_scales(unwrapped_model, retain_scale=1.0, forget_scale=1.0)
+                                if args.use_general_adapter:
+                                    set_scales(unwrapped_model, retain_scale=1.0, forget_scale=1.0, general_scale=1.0)
+                                else:
+                                    set_scales(unwrapped_model, retain_scale=1.0, forget_scale=1.0)
 
             # Step optimizers (gated) and zero grads.
             # Gradient-ascent baseline: only retain_opt steps; forget adapter stays at init.
@@ -393,12 +462,17 @@ def main():
                 if (n_forget_global + n_unclassified_global + n_retain_global) > 0:
                     retain_opt.step()
             else:
-                if n_forget_global > 0:
+                forget_steps_now = n_forget_global + (n_unclassified_global if args.unclassified_trains_both else 0)
+                if forget_steps_now > 0:
                     forget_opt.step()
                 if (n_unclassified_global + n_retain_global) > 0:
                     retain_opt.step()
+                    if general_opt is not None:
+                        general_opt.step()
             retain_opt.zero_grad(set_to_none=True)
             forget_opt.zero_grad(set_to_none=True)
+            if general_opt is not None:
+                general_opt.zero_grad(set_to_none=True)
 
             # Log
             log = {
@@ -412,7 +486,7 @@ def main():
                 "train/epoch": epoch + (optim_step + 1) / max(1, total_optim_steps_per_epoch),
             }
             for cls, name in [(CLASS_FORGET, "forget"), (CLASS_UNCLASSIFIED, "unclassified"),
-                              (CLASS_RETAIN, "retain")]:
+                              (CLASS_RETAIN, "retain"), (CLASS_FORGET_ONLY, "forget_only")]:
                 ls = losses_by_class[cls]
                 if ls:
                     log[f"train/{name}/loss_mean_local"] = sum(ls) / len(ls)
@@ -431,7 +505,8 @@ def main():
         skip_this_eval = args.no_evals or (args.eval_only_at_end and not is_last_epoch)
         if not done and not skip_this_eval:
             accelerator.print(f"epoch {epoch+1} complete; running 3-config eval")
-            eval_metrics = eval_three_configs(accelerator, model, eval_dl_retain, eval_dl_forget)
+            eval_metrics = eval_three_configs(accelerator, model, eval_dl_retain, eval_dl_forget,
+                                               use_general=args.use_general_adapter)
             if accelerator.is_main_process:
                 log_metrics = {f"eval/{k}": v for k, v in eval_metrics.items()}
                 log_metrics["train/epoch"] = epoch + 1
@@ -453,16 +528,31 @@ def main():
 
 
 @torch.no_grad()
-def eval_three_configs(accelerator, model, eval_dl_retain, eval_dl_forget):
+def eval_three_configs(accelerator, model, eval_dl_retain, eval_dl_forget, use_general: bool = False):
     """3-config × 2-split held-out eval. Aggregates (sum reduce) total_loss and
     total_tokens across ranks so the reported number is a full-dataset token-weighted
     mean CE, independent of world_size.
+
+    2-adapter mode: configs (both, retain_only, forget_only) over (R, F) scales.
+    3-adapter mode: configs (all_three, retain_general, forget_general) over (R, F, G) scales.
     """
     model.eval()
-    configs = [("both", 1.0, 1.0), ("retain_only", 1.0, 0.0), ("forget_only", 0.0, 1.0)]
+    if use_general:
+        # (config_name, retain_scale, forget_scale, general_scale)
+        configs = [
+            ("all_three", 1.0, 1.0, 1.0),
+            ("retain_general", 1.0, 0.0, 1.0),
+            ("forget_general", 0.0, 1.0, 1.0),
+        ]
+    else:
+        configs = [
+            ("both", 1.0, 1.0, 1.0),
+            ("retain_only", 1.0, 0.0, 1.0),
+            ("forget_only", 0.0, 1.0, 1.0),
+        ]
     results = {}
-    for cfg_name, rs, fs in configs:
-        set_scales(accelerator.unwrap_model(model), rs, fs)
+    for cfg_name, rs, fs, gs in configs:
+        set_scales(accelerator.unwrap_model(model), rs, fs, gs)
         for split_name, dl in [("retain", eval_dl_retain), ("forget", eval_dl_forget)]:
             total_loss = torch.zeros((), dtype=torch.float64, device=accelerator.device)
             total_tokens = torch.zeros((), dtype=torch.float64, device=accelerator.device)
@@ -481,7 +571,7 @@ def eval_three_configs(accelerator, model, eval_dl_retain, eval_dl_forget):
             total_tokens = accelerator.reduce(total_tokens, reduction="sum")
             denom = torch.clamp(total_tokens, min=1.0)
             results[f"{cfg_name}/{split_name}/loss"] = (total_loss / denom).item()
-    set_scales(accelerator.unwrap_model(model), 1.0, 1.0)
+    set_scales(accelerator.unwrap_model(model), 1.0, 1.0, 1.0)
     model.train()
     return results
 

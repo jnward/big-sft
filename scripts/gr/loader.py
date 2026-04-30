@@ -35,6 +35,7 @@ DATA_DIR = Path("/workspace/training/data")
 CLASS_UNCLASSIFIED = 0
 CLASS_FORGET = 1
 CLASS_RETAIN = 2
+CLASS_FORGET_ONLY = 3  # Pass-4 symmetric ablation: forget-only forward (retain branch ablated)
 
 
 def _load_jsonl(path: Path) -> list[dict]:
@@ -171,13 +172,26 @@ def build_gr_loader(
     retain_from_unlabeled: bool = False,
     inject_prompt: str | None = None,
     filter_overlong: bool = False,
+    forget_only_prob: float = 0.0,
 ) -> GRLoaderBundle:
     _patch_chat_template_for_assistant_mask(tokenizer)
 
-    # Forget pool: every record → CLASS_FORGET
+    # Forget pool: stochastic CLASS_FORGET vs CLASS_FORGET_ONLY per record (seeded).
+    # CLASS_FORGET_ONLY (Pass 4) ablates the retain branch in forward; symmetric to
+    # CLASS_RETAIN's ablation of the forget branch.
+    forget_rng = random.Random(classifier_seed + 1)
+    forget_pool_records = _load_jsonl(DATA_DIR / "gr_train_forget.jsonl")
+    forget_draws = [forget_rng.random() for _ in forget_pool_records]
+    forget_idx = {"i": 0}
+
+    def forget_classification_fn(record):
+        i = forget_idx["i"]
+        forget_idx["i"] += 1
+        return CLASS_FORGET_ONLY if forget_draws[i] < forget_only_prob else CLASS_FORGET
+
     ds_forget = _prep_with_classification(
         DATA_DIR / "gr_train_forget.jsonl",
-        classification_fn=lambda r: CLASS_FORGET,
+        classification_fn=forget_classification_fn,
         tokenizer=tokenizer, max_length=max_length,
         inject_prompt=inject_prompt,
         filter_overlong=filter_overlong,
@@ -221,9 +235,10 @@ def build_gr_loader(
     )
 
     # Count per-class example counts for logging (post-filter dataset).
+    # CLASS_FORGET_ONLY counts as forget for stats purposes (it's a sub-class of forget).
     classes = [int(c) for c in ds["classification"]]
     n_unc = sum(1 for c in classes if c == CLASS_UNCLASSIFIED)
-    n_fgt = sum(1 for c in classes if c == CLASS_FORGET)
+    n_fgt = sum(1 for c in classes if c in (CLASS_FORGET, CLASS_FORGET_ONLY))
     n_rtn = sum(1 for c in classes if c == CLASS_RETAIN)
 
     return GRLoaderBundle(

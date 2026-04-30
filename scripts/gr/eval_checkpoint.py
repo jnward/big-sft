@@ -41,6 +41,8 @@ def parse_args():
     p.add_argument("--layer-start", type=float, default=0.0)
     p.add_argument("--layer-end", type=float, default=1.0)
     p.add_argument("--max-length", type=int, default=32768)
+    p.add_argument("--use-general-adapter", action="store_true",
+                   help="Match training-time 3-adapter mode (general + retain + forget).")
     return p.parse_args()
 
 
@@ -68,6 +70,7 @@ def main():
     inject_adapters(
         model, d_retain=args.d_retain, d_forget=args.d_forget,
         layer_start=args.layer_start, layer_end=args.layer_end,
+        use_general=args.use_general_adapter,
     )
     model = model.to(dtype=torch.bfloat16)
 
@@ -77,7 +80,7 @@ def main():
     adapter_sd = torch.load(ckpt_path, map_location="cpu", weights_only=True)
     missing, unexpected = model.load_state_dict(adapter_sd, strict=False)
     # Only adapter keys should load; base keys are "missing" but that's OK (already loaded from pretrained)
-    adapter_missing = [k for k in missing if any(t in k for t in ("_retain", "_forget"))]
+    adapter_missing = [k for k in missing if any(t in k for t in ("_retain", "_forget", "_general"))]
     if adapter_missing:
         raise RuntimeError(f"Adapter keys missing from state_dict: {adapter_missing[:3]}...")
     if unexpected:
@@ -92,7 +95,8 @@ def main():
     )
 
     accelerator.print("running 3-config eval")
-    eval_metrics = eval_three_configs(accelerator, model, eval_dl_retain, eval_dl_forget)
+    eval_metrics = eval_three_configs(accelerator, model, eval_dl_retain, eval_dl_forget,
+                                       use_general=args.use_general_adapter)
 
     if accelerator.is_main_process:
         print("\n=== Eval results ===")

@@ -50,6 +50,7 @@ class DualMLPAdapter(nn.Module):
         lora_alpha: int = 32,
         lora_r: int = 32,
         match_rslora: bool = False,
+        use_general: bool = False,
     ) -> None:
         super().__init__()
         self.base_mlp = base_mlp
@@ -91,11 +92,38 @@ class DualMLPAdapter(nn.Module):
         self.retain_scale = 1.0
         self.forget_scale = 1.0
 
+        # 3-adapter mode: add a "general" branch always-on at deploy.
+        # Per design: scale all three adapters by 1/sqrt(2) so deploy variance
+        # (R+G summed) matches prior 2-adapter deploy (R alone) variance.
+        self.use_general = use_general
+        if use_general:
+            d_general = d_retain  # same dim as retain/forget for symmetry
+            self.d_general = d_general
+            self.gate_general = nn.Linear(hidden_size, d_general, bias=False)
+            self.up_general = nn.Linear(hidden_size, d_general, bias=False)
+            self.down_general = nn.Linear(d_general, hidden_size, bias=False)
+            nn.init.zeros_(self.down_general.weight)
+            inv_sqrt2 = 1.0 / math.sqrt(2)
+            if variance_scale is None:
+                if match_rslora:
+                    self.scale_general = lora_alpha * math.sqrt(1.0 / (f_nonlin * d_general)) * inv_sqrt2
+                else:
+                    self.scale_general = lora_alpha * math.sqrt(1.0 / (lora_r * d_general * f_nonlin)) * inv_sqrt2
+            else:
+                self.scale_general = variance_scale * inv_sqrt2
+            self.scale_retain *= inv_sqrt2
+            self.scale_forget *= inv_sqrt2
+            self.general_scale = 1.0
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y = self.base_mlp(x)
         r = self.down_retain(F.silu(self.gate_retain(x)) * self.up_retain(x))
         f = self.down_forget(F.silu(self.gate_forget(x)) * self.up_forget(x))
-        return y + (self.retain_scale * self.scale_retain) * r + (self.forget_scale * self.scale_forget) * f
+        out = y + (self.retain_scale * self.scale_retain) * r + (self.forget_scale * self.scale_forget) * f
+        if self.use_general:
+            g = self.down_general(F.silu(self.gate_general(x)) * self.up_general(x))
+            out = out + (self.general_scale * self.scale_general) * g
+        return out
 
 
 def inject_adapters(
@@ -109,6 +137,7 @@ def inject_adapters(
     lora_alpha: int = 32,
     lora_r: int = 32,
     match_rslora: bool = False,
+    use_general: bool = False,
 ) -> list[int]:
     """Replace MLP blocks in the configured range; freeze base params.
 
@@ -133,6 +162,7 @@ def inject_adapters(
             lora_alpha=lora_alpha,
             lora_r=lora_r,
             match_rslora=match_rslora,
+            use_general=use_general,
         )
 
     # Freeze everything outside the adapter branches
@@ -152,6 +182,9 @@ _ADAPTER_SUFFIXES = (
     "gate_forget.weight",
     "up_forget.weight",
     "down_forget.weight",
+    "gate_general.weight",
+    "up_general.weight",
+    "down_general.weight",
 )
 
 
@@ -159,12 +192,19 @@ def _is_adapter_param(name: str) -> bool:
     return any(name.endswith(suffix) for suffix in _ADAPTER_SUFFIXES)
 
 
-def set_scales(model, retain_scale: float, forget_scale: float) -> None:
-    """Set the runtime ablation multipliers on every DualMLPAdapter."""
+def set_scales(model, retain_scale: float, forget_scale: float, general_scale: float = 1.0) -> None:
+    """Set the runtime ablation multipliers on every DualMLPAdapter.
+
+    `general_scale` is only assigned on adapters that have the general branch
+    (use_general=True at construction time). For 2-adapter models the third arg
+    is silently ignored.
+    """
     for m in model.modules():
         if isinstance(m, DualMLPAdapter):
             m.retain_scale = retain_scale
             m.forget_scale = forget_scale
+            if hasattr(m, 'general_scale'):
+                m.general_scale = general_scale
 
 
 def iter_adapters(model) -> Iterable[DualMLPAdapter]:
@@ -173,10 +213,14 @@ def iter_adapters(model) -> Iterable[DualMLPAdapter]:
             yield m
 
 
-def param_groups(model) -> tuple[list[nn.Parameter], list[nn.Parameter]]:
-    """Return (retain_params, forget_params) lists for optimizer construction."""
+def param_groups(model) -> tuple[list[nn.Parameter], list[nn.Parameter], list[nn.Parameter]]:
+    """Return (retain_params, forget_params, general_params) lists for optimizer construction.
+
+    `general_params` is empty when adapters are constructed with use_general=False.
+    """
     retain = []
     forget = []
+    general = []
     for name, p in model.named_parameters():
         if not p.requires_grad:
             continue
@@ -184,4 +228,6 @@ def param_groups(model) -> tuple[list[nn.Parameter], list[nn.Parameter]]:
             retain.append(p)
         elif "_forget" in name:
             forget.append(p)
-    return retain, forget
+        elif "_general" in name:
+            general.append(p)
+    return retain, forget, general
