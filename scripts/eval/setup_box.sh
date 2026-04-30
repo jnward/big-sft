@@ -69,6 +69,18 @@ if [[ -d "$WRENCH_GIT" ]] && [[ "$(du -sm "$WRENCH_GIT" | cut -f1)" -gt 200 ]]; 
   git -C third_party/terminal-wrench checkout "$rev"
 fi
 
+# Apply our local patches to vendored harbor (idempotent — re-applying is a no-op
+# because git apply --check fails on already-applied patches and we skip).
+for patch in scripts/eval/patches/*.patch; do
+  [[ -f "$patch" ]] || continue
+  if git -C third_party/harbor apply --check "$REPO_ROOT/$patch" 2>/dev/null; then
+    echo "applying $(basename "$patch") to third_party/harbor"
+    git -C third_party/harbor apply "$REPO_ROOT/$patch"
+  else
+    echo "  $(basename "$patch") already applied (or doesn't apply cleanly), skipping"
+  fi
+done
+
 # ----- 4. vllm venv --------------------------------------------------------
 log "4/7  .venvs/vllm  (vllm + flash-attn + transformers 4.51.3)"
 VLLM_VENV=.venvs/vllm

@@ -110,14 +110,45 @@ add_boot(classic_no_retain, 1, "gr-s1like-unc-ep1-retain")          # n=99 k=1
 add_boot(classic_no_retain, 5, "gr-s1like-unc-ep5-retain-no-k4")    # n=99 k=4
 
 classic_v5_retain = [(0, BASE_YES_CI)]
+# ep1 & ep2 dropped — those evals used agent_timeout=360s (legacy), not comparable to
+# the rest of the 900s evals. Re-eval at 900s before re-adding.
 for ep, jn in [
-    (1, "gr-s1like-unc-ep1-retain-v5"),       # n=99 k=1
-    (2, "gr-s1like-unc-ep2-retain-v5"),       # n=99 k=1
-    (3, "gr-s1like-unc-ep3-retain-v5-25"),    # n=25 k=1
-    (4, "gr-s1like-unc-ep4-retain-v5-25"),    # n=25 k=1
-    (5, "gr-s1like-unc-ep5-retain-v5-k4"),    # n=99 k=4 (replaces n=25)
+    (3, "gr-s1like-unc-ep3-retain-v5"),       # n=99 k=1 (900s)
+    (4, "gr-s1like-unc-ep4-retain-v5"),       # n=99 k=1 (900s)
+    (5, "gr-s1like-unc-ep5-retain-v5"),       # n=99 k=1 (900s)
 ]:
     add_boot(classic_v5_retain, ep, jn)
+
+# Filtering baseline (ga0) — only v5=✓ retain available so far.
+ga0_v5_retain = [(0, BASE_YES_CI)]
+for ep, jn in [
+    (1, "gr-s1like-ga0-ep1-retain-v5"),
+    (2, "gr-s1like-ga0-ep2-retain-v5"),
+    (3, "gr-s1like-ga0-ep3-retain-v5"),
+]:
+    add_boot(ga0_v5_retain, ep, jn)
+
+# 3-adapter routing — v5=✓ retain (general+retain merged in)
+adp3_v5_retain = [(0, BASE_YES_CI)]
+for ep, jn in [
+    (1, "gr-s1like-3adp-ep1-retain-v5"),
+    (2, "gr-s1like-3adp-ep2-retain-v5"),
+    (3, "gr-s1like-3adp-ep3-retain-v5"),
+    (4, "gr-s1like-3adp-ep4-retain-v5"),  # in-flight; will populate when judged
+    (5, "gr-s1like-3adp-ep5-retain-v5"),
+]:
+    add_boot(adp3_v5_retain, ep, jn)
+
+# fo10 (forget-only-something) — v5=✓ retain
+fo10_v5_retain = [(0, BASE_YES_CI)]
+for ep, jn in [
+    (1, "gr-s1like-fo10-ep1-retain-v5"),
+    (2, "gr-s1like-fo10-ep2-retain-v5"),
+    (3, "gr-s1like-fo10-ep3-retain-v5"),
+    (4, "gr-s1like-fo10-ep4-retain-v5"),
+    (5, "gr-s1like-fo10-ep5-retain-v5"),
+]:
+    add_boot(fo10_v5_retain, ep, jn)
 
 
 # ============================================================================
@@ -136,11 +167,18 @@ def line(ax, rows, color, linestyle, label):
             markersize=7, linewidth=2)
 
 
-def plot_panel(ax, e_retain, c_retain, title, base_ci):
+def plot_panel(ax, e_retain, c_retain, title, base_ci,
+               ga_retain=None, adp3_retain=None, fo10_retain=None):
     ax.axhline(base_ci[1], color="#666666", linewidth=1.2, linestyle="--",
                alpha=0.7, label="base model", zorder=0)
     line(ax, e_retain, "#2ca02c", "-", "exclusive retain")
     line(ax, c_retain, "#2ca02c", ":", "classic retain")
+    if adp3_retain:
+        line(ax, adp3_retain, "#1f77b4", "-", "3-adapter retain")
+    if ga_retain:
+        line(ax, ga_retain, "#9467bd", "-.", "filtering")
+    if fo10_retain:
+        line(ax, fo10_retain, "#d62728", "--", "fo10 retain")
     ax.axhline(0, color="black", linewidth=0.8, alpha=0.4)
     ax.set_xticks([0, 1, 2, 3, 4, 5])
     ax.set_xlim(-0.2, 5.2)
@@ -154,7 +192,8 @@ fig, axes = plt.subplots(1, 2, figsize=(14, 6), sharey=True)
 plot_panel(axes[0], excl_no_retain, classic_no_retain,
            "No elicitation (v5=─)", BASE_NO_CI)
 plot_panel(axes[1], excl_v5_retain, classic_v5_retain,
-           "With v5 elicitation prompt", BASE_YES_CI)
+           "With v5 elicitation prompt", BASE_YES_CI,
+           ga_retain=ga0_v5_retain, adp3_retain=adp3_v5_retain, fo10_retain=fo10_v5_retain)
 axes[0].set_ylabel("Pass rate − hack rate (95% CI)\nhigher = more legit-pass and less hacking", fontsize=11)
 axes[1].legend(loc="lower right", fontsize=10, framealpha=0.95)
 fig.suptitle("Composite: pass_rate − hack_rate@0.5 by epoch\n(classic ckpts: cluster bootstrap on tasks; old ckpts: analytic indep-approx)",

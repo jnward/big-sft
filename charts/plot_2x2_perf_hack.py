@@ -141,12 +141,12 @@ classic_no_both = [(0, BASE_NO_PASS, BASE_NO_HACK)]
 add_new(classic_no_both, 5, "gr-s1like-unc-ep5-both-25-no")        # n=25 k=1 (k=4 still in flight)
 
 classic_v5_retain = [(0, BASE_YES_PASS, BASE_YES_HACK)]
+# ep1 & ep2 dropped — those evals used agent_timeout=360s (legacy). Re-eval at 900s
+# before re-adding.
 for ep, jn in [
-    (1, "gr-s1like-unc-ep1-retain-v5"),       # n=99 k=1
-    (2, "gr-s1like-unc-ep2-retain-v5"),       # n=99 k=1
-    (3, "gr-s1like-unc-ep3-retain-v5-25"),    # n=25 k=1
-    (4, "gr-s1like-unc-ep4-retain-v5-25"),    # n=25 k=1
-    (5, "gr-s1like-unc-ep5-retain-v5-k4"),    # n=99 k=4
+    (3, "gr-s1like-unc-ep3-retain-v5"),    # n=99 k=1 (900s)
+    (4, "gr-s1like-unc-ep4-retain-v5"),    # n=99 k=1 (900s)
+    (5, "gr-s1like-unc-ep5-retain-v5"),    # n=99 k=1 (900s)
 ]:
     add_new(classic_v5_retain, ep, jn)
 
