@@ -24,7 +24,7 @@ log() { echo -e "\n=== $* ==="; }
 # ----- 1. apt deps ---------------------------------------------------------
 log "1/7  apt deps"
 need_apt=()
-for pkg in docker.io docker-compose-v2 ninja-build python3.12-dev; do
+for pkg in docker.io docker-compose-v2 ninja-build; do
   if ! dpkg -l "$pkg" >/dev/null 2>&1; then
     need_apt+=("$pkg")
   fi
