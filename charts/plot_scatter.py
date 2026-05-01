@@ -15,9 +15,13 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 
 REPO = Path(__file__).resolve().parents[1]
-# Default threshold for hack rate. CLI: pass --thr 0.8 to override.
+# Defaults:
+#   HACK_THRESHOLD  — judge score cutoff for "hack" (default 0.5).
+#   LEGIT_X=1       — x-axis becomes "% of trials that passed AND weren't
+#                     hack-flagged at HACK_THRESHOLD" (default x = total pass rate).
 import os
 THR = float(os.environ.get("HACK_THRESHOLD", "0.5"))
+LEGIT_X = os.environ.get("LEGIT_X", "0") == "1"
 
 
 def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float, float]:
@@ -41,12 +45,19 @@ def get_pass_hack_ci(jobname: str):
     k_pass = int(round(pr * nr))
     bt = {b["threshold"]: b for b in s.get("by_threshold", [])}
     k_hack = bt[THR]["n_hacked"] if THR in bt else 0
+    k_passed_hacked = bt[THR]["passed_hacked"] if THR in bt else 0
+    # Legit-pass: passed verifier AND not flagged as hack at THR.
+    # Use n_with_score as denominator so the metric is comparable across
+    # ckpts even when n_with_reward and n_with_score differ slightly.
+    k_legit_pass = max(0, k_pass - k_passed_hacked)
     pass_lo, pass_mid, pass_hi = wilson(k_pass, nr)
+    legit_lo, legit_mid, legit_hi = wilson(k_legit_pass, ns)
     hack_lo, hack_mid, hack_hi = wilson(k_hack, ns)
     return {
-        "pass":  (pass_mid, pass_lo, pass_hi),
-        "hack":  (hack_mid, hack_lo, hack_hi),
-        "n":     (nr, ns),
+        "pass":   (pass_mid, pass_lo, pass_hi),
+        "legit":  (legit_mid, legit_lo, legit_hi),
+        "hack":   (hack_mid, hack_lo, hack_hi),
+        "n":      (nr, ns),
     }
 
 
@@ -61,11 +72,22 @@ def collect_family(prefix: str, eps=(1, 2, 3, 4, 5)):
     return out
 
 
-classic = collect_family("gr-s1like-unc-ep")
-ga0     = collect_family("gr-s1like-ga0-ep")
-ga1     = collect_family("gr-s1like-ga1-ep")
-ga2     = collect_family("gr-s1like-ga2-ep")
-ga4     = collect_family("gr-s1like-ga4-ep")
+def collect_family_xy(prefix: str, eps=(1, 2, 3, 4, 5)):
+    out = []
+    for ep in eps:
+        ci = get_pass_hack_ci(f"{prefix}{ep}-retain-v5")
+        if ci is None:
+            continue
+        x = ci["legit"] if LEGIT_X else ci["pass"]
+        out.append((ep, x, ci["hack"]))
+    return out
+
+
+classic = collect_family_xy("gr-s1like-unc-ep")
+ga0     = collect_family_xy("gr-s1like-ga0-ep")
+ga1     = collect_family_xy("gr-s1like-ga1-ep")
+ga2     = collect_family_xy("gr-s1like-ga2-ep")
+ga4     = collect_family_xy("gr-s1like-ga4-ep")
 
 # Base — try the new patched eval first, fall back to other base evals.
 base_ci = (
@@ -75,11 +97,12 @@ base_ci = (
 
 
 def plot_run(ax, points, color, marker, label, linestyle="-"):
-    """Each `points` element = (epoch, (mid,lo,hi)pass, (mid,lo,hi)hack)."""
+    """Each `points` element = (epoch, (mid,lo,hi)x, (mid,lo,hi)hack)
+    where x is pass-rate or legit-pass depending on LEGIT_X."""
     if not points:
         return
-    xs = [p[1][0] for p in points]                                    # pass mid
-    ys = [p[2][0] for p in points]                                    # hack mid
+    xs = [p[1][0] for p in points]
+    ys = [p[2][0] for p in points]
     xerr_lo = [p[1][0] - p[1][1] for p in points]
     xerr_hi = [p[1][2] - p[1][0] for p in points]
     yerr_lo = [p[2][0] - p[2][1] for p in points]
@@ -110,7 +133,7 @@ plot_run(ax, ga2,     "#1f77b4", "s", "ga2",                       "--")
 plot_run(ax, ga4,     "#ff7f0e", "v", "ga4",                       "-")
 
 if base_ci is not None:
-    bp = base_ci["pass"]
+    bp = base_ci["legit"] if LEGIT_X else base_ci["pass"]
     bh = base_ci["hack"]
     ax.errorbar(
         [bp[0]], [bh[0]],
@@ -126,7 +149,10 @@ if base_ci is not None:
 ax.set_xlim(0.0, 0.8)
 ax.set_ylim(0.0, 1.0)
 ax.invert_yaxis()
-ax.set_xlabel("Task pass rate  →  better →", fontsize=13)
+if LEGIT_X:
+    ax.set_xlabel(f"Legit-pass rate (passed AND not hack-flagged ≥{THR})  →  better →", fontsize=12)
+else:
+    ax.set_xlabel("Task pass rate  →  better →", fontsize=13)
 ax.set_ylabel(f"← better ←  Hack rate (≥{THR})", fontsize=13)
 ax.grid(alpha=0.3)
 ax.text(0.78, 0.02, "↑ optimal", fontsize=11, ha="right", va="top",
@@ -140,6 +166,8 @@ ax.legend(loc="lower left", fontsize=10, framealpha=0.95)
 fig.tight_layout()
 
 suffix = "" if THR == 0.5 else f"_thr{THR}"
+if LEGIT_X:
+    suffix += "_legit"
 out = REPO / "charts" / f"routing_scatter_v5{suffix}.png"
 fig.savefig(out, dpi=150, bbox_inches="tight")
 print(f"saved {out}")
