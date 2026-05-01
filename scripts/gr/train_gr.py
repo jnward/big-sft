@@ -120,6 +120,11 @@ def parse_args():
                         "General is forward-active in all classes; retain & forget are class-specific. "
                         "Deploy uses retain+general (forget ablated). "
                         "Mutually exclusive with --gradient-ascent and --unclassified-trains-both.")
+    p.add_argument("--no-routing", action="store_true",
+                   help="Disable class-based routing entirely. All records become CLASS_UNCLASSIFIED "
+                        "and both adapters train on every example (implies --unclassified-trains-both). "
+                        "Used for the no-intervention / skyline baselines. "
+                        "Mutually exclusive with --gradient-ascent and --use-general-adapter.")
     return p.parse_args()
 
 
@@ -164,6 +169,14 @@ def main():
         raise ValueError(
             "--use-general-adapter is incompatible with --gradient-ascent / --unclassified-trains-both"
         )
+    if args.no_routing and (args.gradient_ascent or args.use_general_adapter):
+        raise ValueError(
+            "--no-routing is incompatible with --gradient-ascent / --use-general-adapter"
+        )
+    if args.no_routing:
+        # No-routing forces both adapters to train on every example; this is
+        # exactly what --unclassified-trains-both does for CLASS_UNCLASSIFIED dispatch.
+        args.unclassified_trains_both = True
     torch.manual_seed(args.seed)
 
     world_size = int(os.environ.get("WORLD_SIZE", 1))
@@ -235,6 +248,7 @@ def main():
         inject_prompt=inject_prompt,
         filter_overlong=args.filter_overlong,
         forget_only_prob=args.forget_only_prob,
+        no_routing=args.no_routing,
     )
     eval_dl_retain, eval_dl_forget = build_eval_loaders(tokenizer, args.max_length)
     accelerator.print(

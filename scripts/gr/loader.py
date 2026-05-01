@@ -173,6 +173,7 @@ def build_gr_loader(
     inject_prompt: str | None = None,
     filter_overlong: bool = False,
     forget_only_prob: float = 0.0,
+    no_routing: bool = False,
 ) -> GRLoaderBundle:
     _patch_chat_template_for_assistant_mask(tokenizer)
 
@@ -226,6 +227,14 @@ def build_gr_loader(
     )
 
     ds = concatenate_datasets([ds_forget, ds_retain])
+    if no_routing:
+        # Override classifications: every record becomes CLASS_UNCLASSIFIED so the
+        # train-time dispatch routes everything through the same path. Combined with
+        # --unclassified-trains-both this trains both adapters on every example.
+        n = len(ds)
+        ds = ds.remove_columns(["classification"]).add_column(
+            "classification", [CLASS_UNCLASSIFIED] * n
+        )
     if only_retain_classified:
         ds = ds.filter(lambda ex: ex["classification"] == CLASS_RETAIN, num_proc=8)
     collator = build_collator(tokenizer)
