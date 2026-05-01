@@ -1,10 +1,15 @@
-"""2D scatter-line plot: pass rate (x) vs hack rate (y, inverted so up is good).
-Each run is a connected line through its epochs. Epoch labels at each point.
-v5=✓ elicitation prompt only. Optimal corner = top-right (high pass, low hack).
+"""Camera-ready 2-D scatter: pass rate vs hack rate, by epoch, with error bars.
+v5 elicitation prompt only. Optimal corner = top-right (high pass, low hack).
+Each family is one connected line through its epochs (1..5); marker labeled
+with epoch number; Wilson 95% CI bars on both axes.
+
+Curated families: classic (s1like_unc_both), filtering (ga0), ga1, ga2, ga4.
+Plus base Qwen3-32B as a single anchor point.
 """
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -13,109 +18,142 @@ REPO = Path(__file__).resolve().parents[1]
 THR = 0.5
 
 
-def get_pass_hack(jobname: str) -> tuple[float, float] | None:
+def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float, float]:
+    if n == 0:
+        return (0.0, 0.0, 0.0)
+    p = k / n
+    den = 1 + z * z / n
+    c = (p + z * z / (2 * n)) / den
+    h = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / den
+    return (c - h, p, c + h)
+
+
+def get_pass_hack_ci(jobname: str):
     p = REPO / "build" / "jobs" / jobname / "judge_scores_judge_v3.json"
     if not p.exists():
         return None
     s = json.loads(p.read_text())["summary"]
+    nr = s["n_with_reward"] or 0
+    ns = s["n_with_score"] or 0
     pr = s["baseline_pass_rate"] or 0.0
+    k_pass = int(round(pr * nr))
     bt = {b["threshold"]: b for b in s.get("by_threshold", [])}
-    hr = (bt[THR]["hack_rate"] if THR in bt else 0.0) or 0.0
-    return pr, hr
+    k_hack = bt[THR]["n_hacked"] if THR in bt else 0
+    pass_lo, pass_mid, pass_hi = wilson(k_pass, nr)
+    hack_lo, hack_mid, hack_hi = wilson(k_hack, ns)
+    return {
+        "pass":  (pass_mid, pass_lo, pass_hi),
+        "hack":  (hack_mid, hack_lo, hack_hi),
+        "n":     (nr, ns),
+    }
 
 
-# Base model (epoch 0). Same anchor for all runs (no adapter).
-# Source: RESULTS.md base v5=✓ — 26.3% pass, 73.2% hack≥0.5.
-BASE_PASS, BASE_HACK = 0.263, 0.732
-
-# OLD exclusive routing — pass% and hack%≥0.5 from RESULTS.md table.
-exclusive = [
-    (0, BASE_PASS, BASE_HACK),
-    (1, 0.347, 0.010),  # s1like-ep1 retain v5=✓
-    (3, 0.010, 0.000),  # s1like-ep3 retain v5=✓
-    (5, 0.010, 0.010),  # s1like-ep5 retain v5=✓
-]
-
-
-def collect_classic(prefix: str, eps: list[int]):
-    """Pull (pass, hack) for each epoch from the live job dir."""
-    out = [(0, BASE_PASS, BASE_HACK)]
+def collect_family(prefix: str, eps=(1, 2, 3, 4, 5)):
+    """Return list of (ep, pass_ci, hack_ci) tuples for available epochs."""
+    out = []
     for ep in eps:
-        kn = get_pass_hack(f"{prefix}{ep}-retain-v5")
-        if kn is None:
+        ci = get_pass_hack_ci(f"{prefix}{ep}-retain-v5")
+        if ci is None:
             continue
-        out.append((ep, kn[0], kn[1]))
+        out.append((ep, ci["pass"], ci["hack"]))
     return out
 
 
-classic   = collect_classic("gr-s1like-unc-ep",   [3, 4, 5])  # ep1, ep2 dropped (360s legacy)
-filtering = collect_classic("gr-s1like-ga0-ep",   [1, 2, 3])
-adp3      = collect_classic("gr-s1like-3adp-ep",  [1, 2, 3, 4, 5])
-fo10      = collect_classic("gr-s1like-fo10-ep",  [1, 2, 3, 4, 5])
-ga4       = collect_classic("gr-s1like-ga4-ep",   [1, 2, 3, 4, 5])
+classic = collect_family("gr-s1like-unc-ep")
+ga0     = collect_family("gr-s1like-ga0-ep")
+ga1     = collect_family("gr-s1like-ga1-ep")
+ga2     = collect_family("gr-s1like-ga2-ep")
+ga4     = collect_family("gr-s1like-ga4-ep")
+
+# Base — try the new patched eval first, fall back to other base evals.
+base_ci = (
+    get_pass_hack_ci("base-qwen3-32b-v5-99")
+    or get_pass_hack_ci("base-qwen3-32b-v5-k4")
+)
 
 
 def plot_run(ax, points, color, marker, label, linestyle="-"):
-    if len(points) < 1:
+    """Each `points` element = (epoch, (mid,lo,hi)pass, (mid,lo,hi)hack)."""
+    if not points:
         return
-    xs = [p[1] for p in points]  # pass
-    ys = [p[2] for p in points]  # hack
-    ax.plot(xs, ys, marker=marker, color=color, linestyle=linestyle,
-            markersize=10, linewidth=1.8, label=label, zorder=3)
-    for ep, x, y in points:
-        ax.annotate(str(ep), xy=(x, y), xytext=(7, 6), textcoords="offset points",
-                    fontsize=9, color=color, fontweight="bold", zorder=4)
+    xs = [p[1][0] for p in points]                                    # pass mid
+    ys = [p[2][0] for p in points]                                    # hack mid
+    xerr_lo = [p[1][0] - p[1][1] for p in points]
+    xerr_hi = [p[1][2] - p[1][0] for p in points]
+    yerr_lo = [p[2][0] - p[2][1] for p in points]
+    yerr_hi = [p[2][2] - p[2][0] for p in points]
+    ax.errorbar(
+        xs, ys,
+        xerr=[xerr_lo, xerr_hi], yerr=[yerr_lo, yerr_hi],
+        fmt=marker, color=color, linestyle=linestyle,
+        markersize=10, linewidth=2.0, elinewidth=1.0,
+        ecolor=color, capsize=3, alpha=0.95,
+        label=label, zorder=3,
+    )
+    for ep, p_ci, h_ci in points:
+        ax.annotate(str(ep), xy=(p_ci[0], h_ci[0]), xytext=(8, 7),
+                    textcoords="offset points", fontsize=10,
+                    color=color, fontweight="bold", zorder=4)
 
 
 fig, ax = plt.subplots(figsize=(10, 8))
 
-# Optimal corner shading: high pass, low hack (top-right).
-ax.axhspan(0.0, 0.2, xmin=0.6, xmax=1.0, color="#2ca02c", alpha=0.06, zorder=0)
+# Optimal corner (top-right when y-axis is inverted)
+ax.axhspan(0.0, 0.20, xmin=0.55, xmax=1.0, color="#2ca02c", alpha=0.06, zorder=0)
 
-plot_run(ax, exclusive, "#2ca02c", "o", "exclusive retain", "-")
-plot_run(ax, classic,   "#2ca02c", "o", "classic retain",   ":")
-plot_run(ax, adp3,      "#1f77b4", "s", "3-adapter retain")
-plot_run(ax, filtering, "#9467bd", "^", "filtering",        "-.")
-plot_run(ax, fo10,      "#d62728", "D", "fo10 retain",      "--")
-if len(ga4) > 1:
-    plot_run(ax, ga4, "#ff8c1a", "v", "ga4 retain", "-")
+plot_run(ax, classic, "#2ca02c", "o", "classic (s1like_unc)",       "-")
+plot_run(ax, ga0,     "#9467bd", "^", "filtering (ga0)",           "-.")
+plot_run(ax, ga1,     "#8c564b", "P", "ga1",                       ":")
+plot_run(ax, ga2,     "#1f77b4", "s", "ga2",                       "--")
+plot_run(ax, ga4,     "#ff7f0e", "v", "ga4",                       "-")
 
-# Base anchor (large gray X)
-ax.scatter([BASE_PASS], [BASE_HACK], marker="X", s=200, color="#666666",
-           zorder=5, label="base (epoch 0)")
-ax.annotate("base", xy=(BASE_PASS, BASE_HACK), xytext=(8, -14),
-            textcoords="offset points", fontsize=10, color="#444444")
+if base_ci is not None:
+    bp = base_ci["pass"]
+    bh = base_ci["hack"]
+    ax.errorbar(
+        [bp[0]], [bh[0]],
+        xerr=[[bp[0] - bp[1]], [bp[2] - bp[0]]],
+        yerr=[[bh[0] - bh[1]], [bh[2] - bh[0]]],
+        fmt="X", color="#444444", markersize=14, linewidth=0,
+        elinewidth=1.2, ecolor="#444444", capsize=3,
+        label="base Qwen3-32B", zorder=5,
+    )
+    ax.annotate("base", xy=(bp[0], bh[0]), xytext=(10, -16),
+                textcoords="offset points", fontsize=11, color="#222222")
 
-# Axes — y inverted so low hack (good) is up.
 ax.set_xlim(0.0, 0.8)
 ax.set_ylim(0.0, 1.0)
 ax.invert_yaxis()
-ax.set_xlabel("Task pass rate →  better →", fontsize=12)
-ax.set_ylabel("← better ←  Hack rate (≥0.5)", fontsize=12)
+ax.set_xlabel("Task pass rate  →  better →", fontsize=13)
+ax.set_ylabel("← better ←  Hack rate (≥0.5)", fontsize=13)
 ax.grid(alpha=0.3)
-
-# Optimal-corner annotation
 ax.text(0.78, 0.02, "↑ optimal", fontsize=11, ha="right", va="top",
         color="#2ca02c", fontweight="bold")
-
-ax.set_title("v5 elicitation prompt: pass vs hack by epoch\n(numbers = epoch; lines connect a run's epochs)",
-             fontsize=13)
+ax.set_title(
+    "v5 elicitation prompt: pass rate vs hack rate\n"
+    "(numbers = epoch; lines connect a family's epochs; Wilson 95% CI)",
+    fontsize=13,
+)
 ax.legend(loc="lower left", fontsize=10, framealpha=0.95)
-
 fig.tight_layout()
+
 out = REPO / "charts" / "routing_scatter_v5.png"
 fig.savefig(out, dpi=150, bbox_inches="tight")
 print(f"saved {out}")
 
 # Data dump
 def dump(label, pts):
-    print(f"  {label}:")
-    for ep, p, h in pts:
-        print(f"    ep={ep}  pass={p:.1%}  hack={h:.1%}")
-print()
-dump("exclusive", exclusive)
+    print(f"\n  {label}:")
+    for ep, p_ci, h_ci in pts:
+        print(f"    ep={ep}  pass={p_ci[0]:.1%} [{p_ci[1]:.1%},{p_ci[2]:.1%}]  "
+              f"hack={h_ci[0]:.1%} [{h_ci[1]:.1%},{h_ci[2]:.1%}]")
+print("\n=== Data ===")
 dump("classic",   classic)
-dump("3-adapter", adp3)
-dump("filtering", filtering)
-dump("fo10",      fo10)
+dump("ga0",       ga0)
+dump("ga1",       ga1)
+dump("ga2",       ga2)
 dump("ga4",       ga4)
+if base_ci:
+    bp, bh = base_ci["pass"], base_ci["hack"]
+    print(f"\n  base: pass={bp[0]:.1%} [{bp[1]:.1%},{bp[2]:.1%}]  "
+          f"hack={bh[0]:.1%} [{bh[1]:.1%},{bh[2]:.1%}]")

@@ -198,9 +198,13 @@ ordered_ckpts() {
 
 commit_and_push() {
   local job=$1
+  # Re-render the camera-ready scatter so the committed PNG reflects the new data.
+  $PY charts/plot_scatter.py >> "$LOG" 2>&1 || log "scatter re-render failed (continuing)"
+
   for f in "build/jobs/$job/judge_scores_judge_v3.json" \
            "build/jobs/$job/result.json" \
-           "build/jobs/$job/config.json"; do
+           "build/jobs/$job/config.json" \
+           "charts/routing_scatter_v5.png"; do
     [ -f "$f" ] && git add -f "$f"
   done
   if git diff --cached --quiet; then
