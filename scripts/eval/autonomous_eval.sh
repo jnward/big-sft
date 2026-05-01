@@ -35,11 +35,50 @@ LOG=/workspace/big-sft/autonomous_eval.log
 PHASE_FILE=/workspace/big-sft/.eval_phase
 PHASE=$(cat "$PHASE_FILE" 2>/dev/null || echo v5)
 
-# Once the no phase has fully completed, stay in v5 forever so any future
-# ep5 ckpts get evaluated with the v5 elicitation prompt only.
-NO_DONE_FILE=/workspace/big-sft/.no_phase_complete
-NO_DONE=0
-[ -f "$NO_DONE_FILE" ] && NO_DONE=1
+# Curated allowlist patterns for both v5 and no phases. New ep5 families get
+# added here; the watcher then evaluates them in v5 first, then no.
+CURATED_EP5_GLOB=(
+  checkpoints/gr_32b_mlp_fr02_ddp_s1like_unc_both_ep5
+  checkpoints/gr_32b_mlp_fr02_ddp_s1like_ga[0-9]*_ep5
+  checkpoints/gr_32b_mlp_fr02_ddp_s1like_noint_ep5
+  checkpoints/gr_32b_mlp_fr02_ddp_s1like_skyline_ep5
+)
+
+# job suffix-name helper (compute -retain-v5 / -retain-no for a ckpt name).
+short_for() {
+  local name=$1
+  local short=${name#gr_32b_mlp_fr02_ddp_}
+  short=${short/_both_/_}
+  short=${short//_/-}
+  echo "$short"
+}
+
+# Count pending evals in each phase. v5: any curated ep5 ckpt missing
+# -retain-v5. no: any curated ep5 ckpt with v5 done but no missing -retain-no,
+# plus the 3 specials and base-no.
+count_pending_v5() {
+  local n=0 ckpt
+  for ckpt in "${CURATED_EP5_GLOB[@]}"; do
+    [ -d "$ckpt" ] && [ -f "$ckpt/adapter_state_dict.pt" ] || continue
+    local s=$(short_for "$(basename "$ckpt")")
+    [ -f "build/jobs/gr-${s}-retain-v5/judge_scores_judge_v3.json" ] || n=$((n+1))
+  done
+  [ -f "build/jobs/base-qwen3-32b-v5-99/judge_scores_judge_v3.json" ] || n=$((n+1))
+  echo $n
+}
+count_pending_no() {
+  local n=0 ckpt
+  for ckpt in "${CURATED_EP5_GLOB[@]}"; do
+    [ -d "$ckpt" ] && [ -f "$ckpt/adapter_state_dict.pt" ] || continue
+    local s=$(short_for "$(basename "$ckpt")")
+    [ -f "build/jobs/gr-${s}-retain-v5/judge_scores_judge_v3.json" ] || continue
+    [ -f "build/jobs/gr-${s}-retain-no/judge_scores_judge_v3.json" ] || n=$((n+1))
+  done
+  for j in gr-s1like-unc-ep5-forget-no gr-s1like-unc-ep5-both-no base-qwen3-32b-no-99; do
+    [ -f "build/jobs/$j/judge_scores_judge_v3.json" ] || n=$((n+1))
+  done
+  echo $n
+}
 
 log() {
   echo "[$(date +%Y-%m-%d\ %H:%M:%S)] $*" | tee -a "$LOG"
@@ -164,10 +203,12 @@ eval_3adapter() {
 
 should_skip() {
   local name=$1
-  # Allowlist: only re-eval ep5 of the curated families.
+  # Allowlist: only re-eval ep5 of the curated families. Mirrors CURATED_EP5_GLOB.
   case "$name" in
     gr_32b_mlp_fr02_ddp_s1like_unc_both_ep5) return 1 ;;
     gr_32b_mlp_fr02_ddp_s1like_ga[0-9]*_ep5) return 1 ;;
+    gr_32b_mlp_fr02_ddp_s1like_noint_ep5)    return 1 ;;
+    gr_32b_mlp_fr02_ddp_s1like_skyline_ep5)  return 1 ;;
     *) return 0 ;;
   esac
 }
@@ -208,7 +249,7 @@ if pgrep -f "sweep_k4.sh" > /dev/null; then
 fi
 log "sweep_k4 done; entering watch loop"
 
-log "starting in PHASE=$PHASE (NO_DONE=$NO_DONE)"
+log "starting in PHASE=$PHASE (v5_pending=$(count_pending_v5), no_pending=$(count_pending_no))"
 
 # Build initial eval-dataset for current PHASE.
 prep_dataset
@@ -315,62 +356,17 @@ while true; do
     run_base_eval  # base-qwen3-32b-no-99
   fi
 
-  # Phase switch v5 → no: when all curated ep5 v5 evals are judged.
-  if [ "$PHASE" = "v5" ] && [ "$NO_DONE" -eq 0 ]; then
-    all_done=true
-    for ckpt in checkpoints/gr_32b_mlp_fr02_ddp_s1like_unc_both_ep5 \
-                checkpoints/gr_32b_mlp_fr02_ddp_s1like_ga[0-9]*_ep5; do
-      [ -d "$ckpt" ] && [ -f "$ckpt/adapter_state_dict.pt" ] || continue
-      job=$(job_name_for "$(basename "$ckpt")")
-      if [ ! -f "build/jobs/$job/judge_scores_judge_v3.json" ]; then
-        all_done=false
-        break
-      fi
-    done
-    if $all_done; then
-      log "all ep5-v5 evals judged → switching PHASE=no"
-      PHASE=no
-      echo no > "$PHASE_FILE"
-      prep_dataset
-      run_base_eval  # kick off base-no-99 immediately
-    fi
-  fi
+  # Phase routing: switch to whichever phase has pending work, but only if
+  # the OTHER phase is empty (so we don't oscillate when stable).
+  v5_pending=$(count_pending_v5)
+  no_pending=$(count_pending_no)
 
-  # Phase switch no → v5 (one-time): when all no-phase work is judged, set
-  # NO_DONE so we stay in v5 forever for any future ep5 ckpts.
-  if [ "$PHASE" = "no" ] && [ "$NO_DONE" -eq 0 ]; then
-    all_no_done=true
-    # ep5 retain-no for each curated ckpt that has a v5 counterpart
-    for ckpt in checkpoints/gr_32b_mlp_fr02_ddp_s1like_unc_both_ep5 \
-                checkpoints/gr_32b_mlp_fr02_ddp_s1like_ga[0-9]*_ep5; do
-      [ -d "$ckpt" ] && [ -f "$ckpt/adapter_state_dict.pt" ] || continue
-      name=$(basename "$ckpt")
-      short=${name#gr_32b_mlp_fr02_ddp_}
-      short=${short/_both_/_}
-      short=${short//_/-}
-      v5_job="gr-${short}-retain-v5"
-      no_job="gr-${short}-retain-no"
-      [ -f "build/jobs/$v5_job/judge_scores_judge_v3.json" ] || continue
-      if [ ! -f "build/jobs/$no_job/judge_scores_judge_v3.json" ]; then
-        all_no_done=false
-        break
-      fi
-    done
-    # specials
-    for special in gr-s1like-unc-ep5-forget-no gr-s1like-unc-ep5-both-no base-qwen3-32b-no-99; do
-      if [ ! -f "build/jobs/$special/judge_scores_judge_v3.json" ]; then
-        all_no_done=false
-        break
-      fi
-    done
-    if $all_no_done; then
-      log "all no-phase work judged → switching back to PHASE=v5 (NO_DONE=1, watching for new ckpts)"
-      NO_DONE=1
-      touch "$NO_DONE_FILE"
-      PHASE=v5
-      echo v5 > "$PHASE_FILE"
-      prep_dataset
-    fi
+  if [ "$PHASE" = "v5" ] && [ "$v5_pending" -eq 0 ] && [ "$no_pending" -gt 0 ]; then
+    log "v5 phase done ($no_pending no-phase items pending) → switching PHASE=no"
+    PHASE=no; echo no > "$PHASE_FILE"; prep_dataset
+  elif [ "$PHASE" = "no" ] && [ "$no_pending" -eq 0 ] && [ "$v5_pending" -gt 0 ]; then
+    log "no phase done ($v5_pending v5-phase items pending) → switching PHASE=v5"
+    PHASE=v5; echo v5 > "$PHASE_FILE"; prep_dataset
   fi
 
   sleep 60
