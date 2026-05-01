@@ -35,6 +35,12 @@ LOG=/workspace/big-sft/autonomous_eval.log
 PHASE_FILE=/workspace/big-sft/.eval_phase
 PHASE=$(cat "$PHASE_FILE" 2>/dev/null || echo v5)
 
+# Once the no phase has fully completed, stay in v5 forever so any future
+# ep5 ckpts get evaluated with the v5 elicitation prompt only.
+NO_DONE_FILE=/workspace/big-sft/.no_phase_complete
+NO_DONE=0
+[ -f "$NO_DONE_FILE" ] && NO_DONE=1
+
 log() {
   echo "[$(date +%Y-%m-%d\ %H:%M:%S)] $*" | tee -a "$LOG"
 }
@@ -82,6 +88,30 @@ eval_2adapter() {
   local merged=build/merged/$(basename $ckpt_dir)_retain
   log "EVAL  $job_name (2-adapter retain_only) ..."
   $RUN --checkpoint "$pt" --mode retain_only \
+    --job-name "$job_name" --merged-dir "$merged" >> "$LOG" 2>&1
+  rc=$?
+  if [ $rc -ne 0 ]; then
+    log "ERROR $job_name (rc=$rc)"
+  else
+    log "DONE  $job_name"
+    commit_and_push "$job_name"
+  fi
+}
+
+# Generic 2-adapter eval with explicit mode (retain_only, forget_only, both).
+eval_2adapter_with_mode() {
+  local ckpt_dir=$1 job_name=$2 mode=$3
+  local pt=$ckpt_dir/adapter_state_dict.pt
+  local merged_suffix
+  case "$mode" in
+    retain_only) merged_suffix=retain ;;
+    forget_only) merged_suffix=forget ;;
+    both)        merged_suffix=both ;;
+    *) log "ERROR unknown mode: $mode"; return ;;
+  esac
+  local merged=build/merged/$(basename $ckpt_dir)_${merged_suffix}
+  log "EVAL  $job_name (2-adapter $mode) ..."
+  $RUN --checkpoint "$pt" --mode "$mode" \
     --job-name "$job_name" --merged-dir "$merged" >> "$LOG" 2>&1
   rc=$?
   if [ $rc -ne 0 ]; then
@@ -142,14 +172,16 @@ should_skip() {
   esac
 }
 
-# One-shot base-model eval (no adapter, full-precision Qwen3-32B).
+# Base-model eval (no adapter, full-precision Qwen3-32B). Suffix follows PHASE.
 run_base_eval() {
-  local job=base-qwen3-32b-v5-99
+  local suffix=v5-99
+  [ "$PHASE" = "no" ] && suffix=no-99
+  local job=base-qwen3-32b-${suffix}
   if [ -f "build/jobs/$job/judge_scores_judge_v3.json" ]; then
-    log "base eval already judged — skipping"
+    log "base eval ($job) already judged — skipping"
     return
   fi
-  log "EVAL  $job (no adapter)"
+  log "EVAL  $job (no adapter, PHASE=$PHASE)"
   bash scripts/eval/stop_serve.sh >> "$LOG" 2>&1
   local base
   base=$(ls -d /home/ubuntu/huggingface/hub/models--Qwen--Qwen3-32B/snapshots/*/ 2>/dev/null | head -1 | sed 's|/$||')
@@ -176,13 +208,13 @@ if pgrep -f "sweep_k4.sh" > /dev/null; then
 fi
 log "sweep_k4 done; entering watch loop"
 
-log "starting in PHASE=$PHASE"
+log "starting in PHASE=$PHASE (NO_DONE=$NO_DONE)"
 
 # Build initial eval-dataset for current PHASE.
 prep_dataset
 
-# Run base-model eval once before the watch loop (only in v5 phase).
-[ "$PHASE" = "v5" ] && run_base_eval
+# Run base-model eval once before the watch loop (phase-aware: -v5-99 / -no-99).
+run_base_eval
 
 ordered_ckpts() {
   # Round-robin order: epoch 5 first across all families, then 1, 3, 2, 4.
@@ -243,6 +275,16 @@ while true; do
       continue
     fi
 
+    # In no phase, skip ckpts that don't have a v5 counterpart yet — those
+    # are new ckpts and should be evaluated with v5 first (after no→v5 switch).
+    if [ "$PHASE" = "no" ]; then
+      v5_counterpart=${job_name/-retain-no/-retain-v5}
+      if [ ! -f "build/jobs/$v5_counterpart/judge_scores_judge_v3.json" ]; then
+        log "skip $job_name in no phase: $v5_counterpart not yet evaluated"
+        continue
+      fi
+    fi
+
     branches=$(detect_branches "$pt")
     case "$branches" in
       forget,retain)
@@ -257,9 +299,22 @@ while true; do
     esac
   done
 
-  # Phase switch: when all curated ep5 v5 evals are judged, advance to v5=no
-  # and re-run the same ep5 ckpts without the v5 inject prompt.
-  if [ "$PHASE" = "v5" ]; then
+  # Specials: in no phase, also eval unc ep5 forget-only, unc ep5 both, base-no.
+  if [ "$PHASE" = "no" ]; then
+    unc_ep5=checkpoints/gr_32b_mlp_fr02_ddp_s1like_unc_both_ep5
+    if [ -d "$unc_ep5" ] && [ -f "$unc_ep5/adapter_state_dict.pt" ]; then
+      if [ ! -f "build/jobs/gr-s1like-unc-ep5-forget-no/judge_scores_judge_v3.json" ]; then
+        eval_2adapter_with_mode "$unc_ep5" "gr-s1like-unc-ep5-forget-no" "forget_only"
+      fi
+      if [ ! -f "build/jobs/gr-s1like-unc-ep5-both-no/judge_scores_judge_v3.json" ]; then
+        eval_2adapter_with_mode "$unc_ep5" "gr-s1like-unc-ep5-both-no" "both"
+      fi
+    fi
+    run_base_eval  # base-qwen3-32b-no-99
+  fi
+
+  # Phase switch v5 → no: when all curated ep5 v5 evals are judged.
+  if [ "$PHASE" = "v5" ] && [ "$NO_DONE" -eq 0 ]; then
     all_done=true
     for ckpt in checkpoints/gr_32b_mlp_fr02_ddp_s1like_unc_both_ep5 \
                 checkpoints/gr_32b_mlp_fr02_ddp_s1like_ga[0-9]*_ep5; do
@@ -275,7 +330,46 @@ while true; do
       PHASE=no
       echo no > "$PHASE_FILE"
       prep_dataset
+      run_base_eval  # kick off base-no-99 immediately
     fi
   fi
+
+  # Phase switch no → v5 (one-time): when all no-phase work is judged, set
+  # NO_DONE so we stay in v5 forever for any future ep5 ckpts.
+  if [ "$PHASE" = "no" ] && [ "$NO_DONE" -eq 0 ]; then
+    all_no_done=true
+    # ep5 retain-no for each curated ckpt that has a v5 counterpart
+    for ckpt in checkpoints/gr_32b_mlp_fr02_ddp_s1like_unc_both_ep5 \
+                checkpoints/gr_32b_mlp_fr02_ddp_s1like_ga[0-9]*_ep5; do
+      [ -d "$ckpt" ] && [ -f "$ckpt/adapter_state_dict.pt" ] || continue
+      name=$(basename "$ckpt")
+      short=${name#gr_32b_mlp_fr02_ddp_}
+      short=${short/_both_/_}
+      short=${short//_/-}
+      v5_job="gr-${short}-retain-v5"
+      no_job="gr-${short}-retain-no"
+      [ -f "build/jobs/$v5_job/judge_scores_judge_v3.json" ] || continue
+      if [ ! -f "build/jobs/$no_job/judge_scores_judge_v3.json" ]; then
+        all_no_done=false
+        break
+      fi
+    done
+    # specials
+    for special in gr-s1like-unc-ep5-forget-no gr-s1like-unc-ep5-both-no base-qwen3-32b-no-99; do
+      if [ ! -f "build/jobs/$special/judge_scores_judge_v3.json" ]; then
+        all_no_done=false
+        break
+      fi
+    done
+    if $all_no_done; then
+      log "all no-phase work judged → switching back to PHASE=v5 (NO_DONE=1, watching for new ckpts)"
+      NO_DONE=1
+      touch "$NO_DONE_FILE"
+      PHASE=v5
+      echo v5 > "$PHASE_FILE"
+      prep_dataset
+    fi
+  fi
+
   sleep 60
 done
