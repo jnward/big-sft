@@ -1,10 +1,17 @@
 """Camera-ready 2-D scatter: pass rate vs hack rate, by epoch, with error bars.
-v5 elicitation prompt only. Optimal corner = top-right (high pass, low hack).
-Each family is one connected line through its epochs (1..5); marker labeled
-with epoch number; Wilson 95% CI bars on both axes.
+Optimal corner = top-right (high pass, low hack). Each family is one connected
+line through its epochs (1..5); marker labeled with epoch number; Wilson 95%
+CI bars on both axes.
 
 Curated families: classic (s1like_unc_both), filtering (ga0), ga1, ga2, ga4.
 Plus base Qwen3-32B as a single anchor point.
+
+Env knobs:
+  HACK_THRESHOLD  — judge score cutoff for "hack" (default 0.5).
+  LEGIT_X=1       — x-axis becomes "% passed AND not hack-flagged at THR"
+                    (default x = raw pass rate).
+  EVAL_SUFFIX     — 'v5' (default) or 'no'. Selects which job suffix
+                    (-retain-v5 vs -retain-no) to load.
 """
 from __future__ import annotations
 
@@ -15,13 +22,11 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 
 REPO = Path(__file__).resolve().parents[1]
-# Defaults:
-#   HACK_THRESHOLD  — judge score cutoff for "hack" (default 0.5).
-#   LEGIT_X=1       — x-axis becomes "% of trials that passed AND weren't
-#                     hack-flagged at HACK_THRESHOLD" (default x = total pass rate).
 import os
 THR = float(os.environ.get("HACK_THRESHOLD", "0.5"))
 LEGIT_X = os.environ.get("LEGIT_X", "0") == "1"
+EVAL_SUFFIX = os.environ.get("EVAL_SUFFIX", "v5")  # 'v5' or 'no'
+assert EVAL_SUFFIX in ("v5", "no"), f"unsupported EVAL_SUFFIX={EVAL_SUFFIX}"
 
 
 def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float, float]:
@@ -65,7 +70,7 @@ def collect_family(prefix: str, eps=(1, 2, 3, 4, 5)):
     """Return list of (ep, pass_ci, hack_ci) tuples for available epochs."""
     out = []
     for ep in eps:
-        ci = get_pass_hack_ci(f"{prefix}{ep}-retain-v5")
+        ci = get_pass_hack_ci(f"{prefix}{ep}-retain-{EVAL_SUFFIX}")
         if ci is None:
             continue
         out.append((ep, ci["pass"], ci["hack"]))
@@ -75,7 +80,7 @@ def collect_family(prefix: str, eps=(1, 2, 3, 4, 5)):
 def collect_family_xy(prefix: str, eps=(1, 2, 3, 4, 5)):
     out = []
     for ep in eps:
-        ci = get_pass_hack_ci(f"{prefix}{ep}-retain-v5")
+        ci = get_pass_hack_ci(f"{prefix}{ep}-retain-{EVAL_SUFFIX}")
         if ci is None:
             continue
         x = ci["legit"] if LEGIT_X else ci["pass"]
@@ -89,11 +94,14 @@ ga1     = collect_family_xy("gr-s1like-ga1-ep")
 ga2     = collect_family_xy("gr-s1like-ga2-ep")
 ga4     = collect_family_xy("gr-s1like-ga4-ep")
 
-# Base — try the new patched eval first, fall back to other base evals.
-base_ci = (
-    get_pass_hack_ci("base-qwen3-32b-v5-99")
-    or get_pass_hack_ci("base-qwen3-32b-v5-k4")
-)
+# Base — try the n=99 patched-pipeline eval first, fall back to k=4.
+if EVAL_SUFFIX == "v5":
+    base_ci = (
+        get_pass_hack_ci("base-qwen3-32b-v5-99")
+        or get_pass_hack_ci("base-qwen3-32b-v5-k4")
+    )
+else:
+    base_ci = get_pass_hack_ci("base-qwen3-32b-no-99")
 
 
 def plot_run(ax, points, color, marker, label, linestyle="-"):
@@ -157,18 +165,19 @@ ax.set_ylabel(f"← better ←  Hack rate (≥{THR})", fontsize=13)
 ax.grid(alpha=0.3)
 ax.text(0.78, 0.02, "↑ optimal", fontsize=11, ha="right", va="top",
         color="#2ca02c", fontweight="bold")
+prompt_label = "v5 elicitation prompt" if EVAL_SUFFIX == "v5" else "no v5 prompt (default)"
 ax.set_title(
-    "v5 elicitation prompt: pass rate vs hack rate\n"
+    f"{prompt_label}: pass rate vs hack rate\n"
     "(numbers = epoch; lines connect a family's epochs; Wilson 95% CI)",
     fontsize=13,
 )
-ax.legend(loc="lower left", fontsize=10, framealpha=0.95)
+ax.legend(loc="lower right", fontsize=10, framealpha=0.95)
 fig.tight_layout()
 
 suffix = "" if THR == 0.5 else f"_thr{THR}"
 if LEGIT_X:
     suffix += "_legit"
-out = REPO / "charts" / f"routing_scatter_v5{suffix}.png"
+out = REPO / "charts" / f"routing_scatter_{EVAL_SUFFIX}{suffix}.png"
 fig.savefig(out, dpi=150, bbox_inches="tight")
 print(f"saved {out}")
 
