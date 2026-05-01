@@ -249,6 +249,30 @@ if pgrep -f "sweep_k4.sh" > /dev/null; then
 fi
 log "sweep_k4 done; entering watch loop"
 
+commit_and_push() {
+  local job=$1
+  # Re-render the camera-ready scatter for both v5 and no-v5 phases.
+  HACK_THRESHOLD=0.5 $PY charts/plot_scatter.py >> "$LOG" 2>&1 || log "scatter v5@0.5 re-render failed"
+  HACK_THRESHOLD=0.8 $PY charts/plot_scatter.py >> "$LOG" 2>&1 || log "scatter v5@0.8 re-render failed"
+  HACK_THRESHOLD=0.8 LEGIT_X=1 EVAL_SUFFIX=no $PY charts/plot_scatter.py >> "$LOG" 2>&1 || log "scatter no@0.8_legit re-render failed"
+
+  for f in "build/jobs/$job/judge_scores_judge_v3.json" \
+           "build/jobs/$job/result.json" \
+           "build/jobs/$job/config.json" \
+           "charts/routing_scatter_v5.png" \
+           "charts/routing_scatter_v5_thr0.8.png" \
+           "charts/routing_scatter_no_thr0.8_legit.png"; do
+    [ -f "$f" ] && git add -f "$f"
+  done
+  if git diff --cached --quiet; then
+    log "no changes to commit for $job"
+    return
+  fi
+  if git commit -m "results: $job" >> "$LOG" 2>&1 ; then
+    git push origin eval-pipeline >> "$LOG" 2>&1 && log "pushed $job" || log "push failed for $job (will retry next eval)"
+  fi
+}
+
 log "starting in PHASE=$PHASE (v5_pending=$(count_pending_v5), no_pending=$(count_pending_no))"
 
 # Build initial eval-dataset for current PHASE.
@@ -278,30 +302,6 @@ ordered_ckpts() {
     [[ "$seen" == *" $base "* ]] && continue
     echo "$d"
   done
-}
-
-commit_and_push() {
-  local job=$1
-  # Re-render the camera-ready scatter for both v5 and no-v5 phases.
-  HACK_THRESHOLD=0.5 $PY charts/plot_scatter.py >> "$LOG" 2>&1 || log "scatter v5@0.5 re-render failed"
-  HACK_THRESHOLD=0.8 $PY charts/plot_scatter.py >> "$LOG" 2>&1 || log "scatter v5@0.8 re-render failed"
-  HACK_THRESHOLD=0.8 LEGIT_X=1 EVAL_SUFFIX=no $PY charts/plot_scatter.py >> "$LOG" 2>&1 || log "scatter no@0.8_legit re-render failed"
-
-  for f in "build/jobs/$job/judge_scores_judge_v3.json" \
-           "build/jobs/$job/result.json" \
-           "build/jobs/$job/config.json" \
-           "charts/routing_scatter_v5.png" \
-           "charts/routing_scatter_v5_thr0.8.png" \
-           "charts/routing_scatter_no_thr0.8_legit.png"; do
-    [ -f "$f" ] && git add -f "$f"
-  done
-  if git diff --cached --quiet; then
-    log "no changes to commit for $job"
-    return
-  fi
-  if git commit -m "results: $job" >> "$LOG" 2>&1 ; then
-    git push origin eval-pipeline >> "$LOG" 2>&1 && log "pushed $job" || log "push failed for $job (will retry next eval)"
-  fi
 }
 
 while true; do
