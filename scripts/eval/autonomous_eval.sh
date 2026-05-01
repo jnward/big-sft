@@ -30,25 +30,35 @@ AGENT_TIMEOUT=3600
 
 LOG=/workspace/big-sft/autonomous_eval.log
 
+# Phase: 'v5' (inject hack_prompt_v5.md into every task) or 'no' (no inject).
+# Persists across watcher restarts via .eval_phase.
+PHASE_FILE=/workspace/big-sft/.eval_phase
+PHASE=$(cat "$PHASE_FILE" 2>/dev/null || echo v5)
+
 log() {
   echo "[$(date +%Y-%m-%d\ %H:%M:%S)] $*" | tee -a "$LOG"
 }
 
-prep_v5() {
+prep_dataset() {
   rm -rf "$DATASET"
-  $PY -m scripts.eval.prep_eval_dataset --agent-timeout "$AGENT_TIMEOUT" --inject-prompt "$V5" >> "$LOG" 2>&1
+  if [ "$PHASE" = "v5" ]; then
+    $PY -m scripts.eval.prep_eval_dataset --agent-timeout "$AGENT_TIMEOUT" --inject-prompt "$V5" >> "$LOG" 2>&1
+    log "eval-dataset prepped (v5=✓, n=99, agent_timeout=${AGENT_TIMEOUT}s)"
+  else
+    $PY -m scripts.eval.prep_eval_dataset --agent-timeout "$AGENT_TIMEOUT" >> "$LOG" 2>&1
+    log "eval-dataset prepped (v5=─, n=99, agent_timeout=${AGENT_TIMEOUT}s)"
+  fi
 }
 
-# Map ckpt directory name → job name.
-# gr_32b_mlp_fr02_ddp_s1like_unc_both_ep3 → gr-s1like-unc-ep3-retain-v5
-# gr_32b_mlp_fr02_ddp_s1like_fo10_ep2     → gr-s1like-fo10-ep2-retain-v5
-# gr_32b_mlp_fr02_ddp_s1like_ga0_ep1      → gr-s1like-ga0-ep1-retain-v5
+# Map ckpt directory name → job name (suffix follows current PHASE).
 job_name_for() {
   local name=$1
   local short=${name#gr_32b_mlp_fr02_ddp_}
   short=${short/_both_/_}
   short=${short//_/-}
-  echo "gr-${short}-retain-v5"
+  local suffix="-retain-v5"
+  [ "$PHASE" = "no" ] && suffix="-retain-no"
+  echo "gr-${short}${suffix}"
 }
 
 # Detect adapter branches: prints one of "forget,retain", "forget,general,retain", or "unknown".
@@ -124,10 +134,10 @@ eval_3adapter() {
 
 should_skip() {
   local name=$1
-  # Allowlist: only re-eval the curated 26-run comparison set.
+  # Allowlist: only re-eval ep5 of the curated families.
   case "$name" in
-    gr_32b_mlp_fr02_ddp_s1like_unc_both_ep[0-9]*) return 1 ;;
-    gr_32b_mlp_fr02_ddp_s1like_ga[0-9]*_ep[0-9]*) return 1 ;;
+    gr_32b_mlp_fr02_ddp_s1like_unc_both_ep5) return 1 ;;
+    gr_32b_mlp_fr02_ddp_s1like_ga[0-9]*_ep5) return 1 ;;
     *) return 0 ;;
   esac
 }
@@ -166,12 +176,13 @@ if pgrep -f "sweep_k4.sh" > /dev/null; then
 fi
 log "sweep_k4 done; entering watch loop"
 
-# Build initial eval-dataset (v5=yes).
-prep_v5
-log "eval-dataset prepped (v5=✓, n=99, agent_timeout=${AGENT_TIMEOUT}s)"
+log "starting in PHASE=$PHASE"
 
-# Run base-model eval once before the watch loop.
-run_base_eval
+# Build initial eval-dataset for current PHASE.
+prep_dataset
+
+# Run base-model eval once before the watch loop (only in v5 phase).
+[ "$PHASE" = "v5" ] && run_base_eval
 
 ordered_ckpts() {
   # Round-robin order: epoch 5 first across all families, then 1, 3, 2, 4.
@@ -245,5 +256,26 @@ while true; do
         ;;
     esac
   done
+
+  # Phase switch: when all curated ep5 v5 evals are judged, advance to v5=no
+  # and re-run the same ep5 ckpts without the v5 inject prompt.
+  if [ "$PHASE" = "v5" ]; then
+    all_done=true
+    for ckpt in checkpoints/gr_32b_mlp_fr02_ddp_s1like_unc_both_ep5 \
+                checkpoints/gr_32b_mlp_fr02_ddp_s1like_ga[0-9]*_ep5; do
+      [ -d "$ckpt" ] && [ -f "$ckpt/adapter_state_dict.pt" ] || continue
+      job=$(job_name_for "$(basename "$ckpt")")
+      if [ ! -f "build/jobs/$job/judge_scores_judge_v3.json" ]; then
+        all_done=false
+        break
+      fi
+    done
+    if $all_done; then
+      log "all ep5-v5 evals judged → switching PHASE=no"
+      PHASE=no
+      echo no > "$PHASE_FILE"
+      prep_dataset
+    fi
+  fi
   sleep 60
 done
