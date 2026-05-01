@@ -15,7 +15,9 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 
 REPO = Path(__file__).resolve().parents[1]
-THR = 0.5
+# Default threshold for hack rate. CLI: pass --thr 0.8 to override.
+import os
+THR = float(os.environ.get("HACK_THRESHOLD", "0.5"))
 
 
 def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float, float]:
@@ -125,7 +127,7 @@ ax.set_xlim(0.0, 0.8)
 ax.set_ylim(0.0, 1.0)
 ax.invert_yaxis()
 ax.set_xlabel("Task pass rate  →  better →", fontsize=13)
-ax.set_ylabel("← better ←  Hack rate (≥0.5)", fontsize=13)
+ax.set_ylabel(f"← better ←  Hack rate (≥{THR})", fontsize=13)
 ax.grid(alpha=0.3)
 ax.text(0.78, 0.02, "↑ optimal", fontsize=11, ha="right", va="top",
         color="#2ca02c", fontweight="bold")
@@ -137,7 +139,8 @@ ax.set_title(
 ax.legend(loc="lower left", fontsize=10, framealpha=0.95)
 fig.tight_layout()
 
-out = REPO / "charts" / "routing_scatter_v5.png"
+suffix = "" if THR == 0.5 else f"_thr{THR}"
+out = REPO / "charts" / f"routing_scatter_v5{suffix}.png"
 fig.savefig(out, dpi=150, bbox_inches="tight")
 print(f"saved {out}")
 
