@@ -78,6 +78,7 @@ eval_2adapter() {
     log "ERROR $job_name (rc=$rc)"
   else
     log "DONE  $job_name"
+    commit_and_push "$job_name"
   fi
 }
 
@@ -117,6 +118,7 @@ eval_3adapter() {
     log "ERROR $job_name (rc=$rc)"
   else
     log "DONE  $job_name"
+    commit_and_push "$job_name"
   fi
 }
 
@@ -149,6 +151,7 @@ run_base_eval() {
   $PY -m scripts.eval.recompute_summary "build/jobs/$job" \
       --scores-file judge_scores_judge_v3.json >> "$LOG" 2>&1
   log "DONE  $job"
+  commit_and_push "$job"
 }
 
 # ----- main loop -----
@@ -170,8 +173,47 @@ log "eval-dataset prepped (v5=✓, n=99, agent_timeout=${AGENT_TIMEOUT}s)"
 # Run base-model eval once before the watch loop.
 run_base_eval
 
+ordered_ckpts() {
+  # Round-robin order: epoch 5 first across all families, then 1, 3, 2, 4.
+  # Within each epoch: unc_both, ga2, ga0, ga4. Then any other curated ckpt.
+  local epochs=(5 1 3 2 4)
+  local families=(s1like_unc_both s1like_ga2 s1like_ga0 s1like_ga4)
+  local seen=" "
+  for ep in "${epochs[@]}"; do
+    for fam in "${families[@]}"; do
+      local d="checkpoints/gr_32b_mlp_fr02_ddp_${fam}_ep${ep}/"
+      if [ -d "$d" ] && [ -f "${d}adapter_state_dict.pt" ]; then
+        echo "$d"
+        seen+=" $(basename "${d%/}") "
+      fi
+    done
+  done
+  # Pick up curated ckpts not in the explicit grid (e.g., a future ga1 family).
+  for d in $(ls -d checkpoints/*/ 2>/dev/null | sort); do
+    base=$(basename "$d")
+    [[ "$seen" == *" $base "* ]] && continue
+    echo "$d"
+  done
+}
+
+commit_and_push() {
+  local job=$1
+  for f in "build/jobs/$job/judge_scores_judge_v3.json" \
+           "build/jobs/$job/result.json" \
+           "build/jobs/$job/config.json"; do
+    [ -f "$f" ] && git add -f "$f"
+  done
+  if git diff --cached --quiet; then
+    log "no changes to commit for $job"
+    return
+  fi
+  if git commit -m "results: $job" >> "$LOG" 2>&1 ; then
+    git push origin eval-pipeline >> "$LOG" 2>&1 && log "pushed $job" || log "push failed for $job (will retry next eval)"
+  fi
+}
+
 while true; do
-  for ckpt_dir in $(ls -d checkpoints/*/ 2>/dev/null | sort); do
+  for ckpt_dir in $(ordered_ckpts); do
     name=$(basename "$ckpt_dir")
     if should_skip "$name"; then continue; fi
     pt=$ckpt_dir/adapter_state_dict.pt
