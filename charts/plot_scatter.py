@@ -250,13 +250,27 @@ ax_no.set_xlabel(xlab, fontsize=29)
 ax_v5.set_xlabel(xlab, fontsize=29)
 ax_no.set_ylabel("Hack Rate → better", fontsize=29)
 
-# Single legend on right panel — merge labels from both panels so a point
-# that exists only on one side still shows up.
-seen, handles, labels = set(), [], []
+# Single legend on right panel — merge labels from both panels (so points
+# present on only one side still show) and force the user-requested order.
+LEGEND_ORDER = [
+    "Qwen3-32B",
+    "baseline (no intervention)",
+    "classifier filtering",
+    "oracle filtering",
+    "gradient ascent",
+    "arbitrary 50% parameter ablation",
+    "gradient routing (ours)",
+]
+all_hl = {}
 for ax in (ax_no, ax_v5):
     for h, l in zip(*ax.get_legend_handles_labels()):
-        if l not in seen:
-            seen.add(l); handles.append(h); labels.append(l)
+        all_hl.setdefault(l, h)
+ordered = [(all_hl[l], l) for l in LEGEND_ORDER if l in all_hl]
+# Append any unrecognized labels at the end (defensive).
+for l, h in all_hl.items():
+    if l not in LEGEND_ORDER:
+        ordered.append((h, l))
+handles, labels = zip(*ordered) if ordered else ([], [])
 ax_v5.legend(handles, labels, loc="lower right", fontsize=23, framealpha=0.95)
 
 fig.tight_layout()
