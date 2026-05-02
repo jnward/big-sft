@@ -144,11 +144,11 @@ ax_no.set_ylabel("Hack Rate → better", fontsize=29)
 
 # Hand-built marker-only legend handles (no error-bar caps).
 LEGEND_SPECS = [
-    # (label, marker, color, markersize)
-    ("gradient routing — retain only",   "o", COL_RETAIN, 13),
-    ("gradient routing — forget only",   "^", COL_FORGET, 13),
-    ("gradient routing — both adapters", "s", COL_BOTH,   13),
-    ("Qwen3-32B",                        "X", COL_BASE,   16),
+    # (label, marker, color, markersize) — sizes match the actual plot points.
+    ("gradient routing — retain only",   "o", COL_RETAIN, 25),
+    ("gradient routing — forget only",   "^", COL_FORGET, 25),
+    ("gradient routing — both adapters", "s", COL_BOTH,   25),
+    ("Qwen3-32B",                        "X", COL_BASE,   31),
 ]
 legend_handles = [
     Line2D([0], [0], marker=m, color=c, markersize=ms,

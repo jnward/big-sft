@@ -254,14 +254,14 @@ ax_no.set_ylabel("Hack Rate → better", fontsize=29)
 # Single legend on the right panel — hand-built marker-only handles (no
 # connecting line, no error-bar caps) in the user-requested order.
 LEGEND_SPECS = [
-    # (label, marker, color, markersize)
-    ("Qwen3-32B",                        "X", COLORS["base"],            16),
-    ("baseline (no intervention)",       "X", COLORS["noint_baseline"],  15),
-    ("classifier filtering",             "D", COLORS["filtering"],       12),
-    ("oracle filtering",                 "*", COLORS["skyline"],         16),
-    ("gradient ascent",                  "s", COLORS["ga"],              12),
-    ("arbitrary 50% parameter ablation", "P", COLORS["noint_ablation"],  13),
-    ("gradient routing (ours)",          "o", COLORS["gr"],              12),
+    # (label, marker, color, markersize) — sizes match the actual plot points.
+    ("Qwen3-32B",                        "X", COLORS["base"],            31),
+    ("baseline (no intervention)",       "X", COLORS["noint_baseline"],  29),
+    ("classifier filtering",             "D", COLORS["filtering"],       22),
+    ("oracle filtering",                 "*", COLORS["skyline"],         31),
+    ("gradient ascent",                  "s", COLORS["ga"],              22),
+    ("arbitrary 50% parameter ablation", "P", COLORS["noint_ablation"],  25),
+    ("gradient routing (ours)",          "o", COLORS["gr"],              22),
 ]
 legend_handles = [
     Line2D([0], [0], marker=m, color=c, markersize=ms,
