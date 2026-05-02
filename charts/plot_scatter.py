@@ -167,12 +167,13 @@ def plot_line(ax, xys, color, marker, label, annotations=None,
 
 
 COLORS = {
-    "filtering": "#ff7f0e",
-    "ga":        "#1f77b4",
-    "gr":        "#2ca02c",
-    "noint":     "#9467bd",
-    "skyline":   "#8c564b",
-    "base":      "#444444",
+    "filtering":      "#ff7f0e",
+    "ga":             "#1f77b4",
+    "gr":             "#2ca02c",
+    "noint_baseline": "#9467bd",  # purple
+    "noint_ablation": "#e377c2",  # pink
+    "skyline":        "#8c564b",
+    "base":           "#444444",
 }
 
 
@@ -203,9 +204,9 @@ def render_panel(ax, suffix: str):
     plot_point(ax, filtering,      COLORS["filtering"], "D", "classifier filtering", markersize=20)
     plot_line(ax, [xy for _, xy in ga_xys], COLORS["ga"], "o", "gradient ascent")
     plot_point(ax, classic_retain, COLORS["gr"],        "o", "gradient routing (ours)")
-    plot_point(ax, noint_both,     COLORS["noint"],     "X", "baseline (no intervention)",
+    plot_point(ax, noint_both,     COLORS["noint_baseline"], "X", "baseline (no intervention)",
                markersize=26, zorder=4)
-    plot_point(ax, noint_avg,      COLORS["noint"],     "P", "arbitrary adapter ablation",
+    plot_point(ax, noint_avg,      COLORS["noint_ablation"], "P", "arbitrary adapter ablation",
                markersize=22)
     plot_point(ax, skyline,        COLORS["skyline"],   "*", "oracle filtering", markersize=28)
     if base_ci is not None:
