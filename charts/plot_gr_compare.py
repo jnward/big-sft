@@ -20,7 +20,7 @@ import os
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-from matplotlib.ticker import PercentFormatter
+from matplotlib.ticker import MultipleLocator, PercentFormatter
 
 REPO = Path(__file__).resolve().parents[1]
 THR = float(os.environ.get("HACK_THRESHOLD", "0.8"))
@@ -121,6 +121,7 @@ def render_panel(ax, suffix):
     ax.tick_params(axis="both", labelsize=18)
     ax.xaxis.set_major_formatter(PercentFormatter(1.0, decimals=0))
     ax.yaxis.set_major_formatter(PercentFormatter(1.0, decimals=0))
+    ax.yaxis.set_major_locator(MultipleLocator(0.1))
     ax.text(0.78, 0.02, "optimal ↗", fontsize=22, ha="right", va="top",
             color=COL_RETAIN, fontweight="bold")
 
@@ -149,6 +150,7 @@ for ax in (ax_no, ax_v5):
 ax_v5.legend(handles, labels, loc="lower right", fontsize=18, framealpha=0.95)
 
 fig.tight_layout()
+fig.subplots_adjust(wspace=0.15)
 
 suffix = "" if THR == 0.8 else f"_thr{THR}"
 if not LEGIT_X:
