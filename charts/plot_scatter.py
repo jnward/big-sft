@@ -217,7 +217,8 @@ def render_panel(ax, suffix: str):
             [bp[0]], [bh[0]],
             xerr=[[bp[0] - bp[1]], [bp[2] - bp[0]]],
             yerr=[[bh[0] - bh[1]], [bh[2] - bh[0]]],
-            fmt="X", color=COLORS["base"], markersize=31, linewidth=0,
+            fmt="o", color=COLORS["base"], markersize=22, linewidth=0,
+            markerfacecolor="none", markeredgewidth=2.5,
             elinewidth=2.6, ecolor=COLORS["base"], capsize=7,
             label="Qwen3-32B", zorder=5,
         )
@@ -254,19 +255,21 @@ ax_no.set_ylabel("Hack Rate → better", fontsize=29)
 # Single legend on the right panel — hand-built marker-only handles (no
 # connecting line, no error-bar caps) in the user-requested order.
 LEGEND_SPECS = [
-    # (label, marker, color, markersize) — sizes match the actual plot points.
-    ("Qwen3-32B",                        "X", COLORS["base"],            31),
-    ("baseline (no intervention)",       "X", COLORS["noint_baseline"],  29),
-    ("classifier filtering",             "D", COLORS["filtering"],       22),
-    ("oracle filtering",                 "*", COLORS["skyline"],         31),
-    ("gradient ascent",                  "s", COLORS["ga"],              22),
-    ("arbitrary 50% parameter ablation", "P", COLORS["noint_ablation"],  25),
-    ("gradient routing (ours)",          "o", COLORS["gr"],              22),
+    # (label, marker, color, markersize, hollow) — sizes match plot points.
+    ("Qwen3-32B",                        "o", COLORS["base"],            22, True),
+    ("baseline (no intervention)",       "X", COLORS["noint_baseline"],  29, False),
+    ("classifier filtering",             "D", COLORS["filtering"],       22, False),
+    ("oracle filtering",                 "*", COLORS["skyline"],         31, False),
+    ("gradient ascent",                  "s", COLORS["ga"],              22, False),
+    ("arbitrary 50% parameter ablation", "P", COLORS["noint_ablation"],  25, False),
+    ("gradient routing (ours)",          "o", COLORS["gr"],              22, False),
 ]
 legend_handles = [
     Line2D([0], [0], marker=m, color=c, markersize=ms,
-           linestyle="None", markerfacecolor=c, markeredgecolor=c)
-    for _, m, c, ms in LEGEND_SPECS
+           linestyle="None",
+           markerfacecolor=("none" if hollow else c),
+           markeredgecolor=c, markeredgewidth=(2.5 if hollow else 1.0))
+    for _, m, c, ms, hollow in LEGEND_SPECS
 ]
 legend_labels = [label for label, *_ in LEGEND_SPECS]
 ax_v5.legend(legend_handles, legend_labels,

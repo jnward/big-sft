@@ -110,7 +110,8 @@ def render_panel(ax, suffix):
             [bp[0]], [bh[0]],
             xerr=[[bp[0] - bp[1]], [bp[2] - bp[0]]],
             yerr=[[bh[0] - bh[1]], [bh[2] - bh[0]]],
-            fmt="X", color=COL_BASE, markersize=31, linewidth=0,
+            fmt="o", color=COL_BASE, markersize=25, linewidth=0,
+            markerfacecolor="none", markeredgewidth=2.5,
             elinewidth=2.6, ecolor=COL_BASE, capsize=7,
             label="Qwen3-32B", zorder=5,
         )
@@ -144,16 +145,18 @@ ax_no.set_ylabel("Hack Rate → better", fontsize=29)
 
 # Hand-built marker-only legend handles (no error-bar caps).
 LEGEND_SPECS = [
-    # (label, marker, color, markersize) — sizes match the actual plot points.
-    ("gradient routing — retain only",   "o", COL_RETAIN, 25),
-    ("gradient routing — forget only",   "^", COL_FORGET, 25),
-    ("gradient routing — both adapters", "s", COL_BOTH,   25),
-    ("Qwen3-32B",                        "X", COL_BASE,   31),
+    # (label, marker, color, markersize, hollow) — sizes match plot points.
+    ("gradient routing — retain only",   "o", COL_RETAIN, 25, False),
+    ("gradient routing — forget only",   "^", COL_FORGET, 25, False),
+    ("gradient routing — both adapters", "s", COL_BOTH,   25, False),
+    ("Qwen3-32B",                        "o", COL_BASE,   25, True),
 ]
 legend_handles = [
     Line2D([0], [0], marker=m, color=c, markersize=ms,
-           linestyle="None", markerfacecolor=c, markeredgecolor=c)
-    for _, m, c, ms in LEGEND_SPECS
+           linestyle="None",
+           markerfacecolor=("none" if hollow else c),
+           markeredgecolor=c, markeredgewidth=(2.5 if hollow else 1.0))
+    for _, m, c, ms, hollow in LEGEND_SPECS
 ]
 legend_labels = [label for label, *_ in LEGEND_SPECS]
 ax_v5.legend(legend_handles, legend_labels,
