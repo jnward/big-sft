@@ -206,7 +206,7 @@ def render_panel(ax, suffix: str):
     plot_point(ax, classic_retain, COLORS["gr"],        "o", "gradient routing (ours)")
     plot_point(ax, noint_both,     COLORS["noint_baseline"], "X", "baseline (no intervention)",
                markersize=29, zorder=4)
-    plot_point(ax, noint_avg,      COLORS["noint_ablation"], "P", "arbitrary adapter ablation",
+    plot_point(ax, noint_avg,      COLORS["noint_ablation"], "P", "arbitrary 50% parameter ablation",
                markersize=25)
     plot_point(ax, skyline,        COLORS["skyline"],   "*", "oracle filtering", markersize=31)
     if base_ci is not None:
