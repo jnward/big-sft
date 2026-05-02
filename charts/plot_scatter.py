@@ -69,6 +69,61 @@ def get_pass_hack_ci(jobname: str):
     }
 
 
+def get_paired_avg_ci(jobname1: str, jobname2: str):
+    """Paired-trial average pass / legit / hack with normal-approx CI.
+
+    Used for the noint adapter-ablation pair (retain-only and forget-only
+    trials run on the same task IDs). Per-task averaged outcome
+    z_t = (x_t^{trial1} + x_t^{trial2}) / 2 ∈ {0, 0.5, 1}; CI is
+    p̄ ± 1.96·√(Var(z_t)/n_tasks). Tasks where both trials agree contribute
+    zero variance, so the CI is correctly tightened by the pairing.
+    """
+    p1 = REPO / "build" / "jobs" / jobname1 / "judge_scores_judge_v3.json"
+    p2 = REPO / "build" / "jobs" / jobname2 / "judge_scores_judge_v3.json"
+    if not (p1.exists() and p2.exists()):
+        return None
+    r1 = {r["task_id"]: r for r in json.loads(p1.read_text())["results"]}
+    r2 = {r["task_id"]: r for r in json.loads(p2.read_text())["results"]}
+    common = set(r1.keys()) & set(r2.keys())
+
+    def _ind(rec, key, op=lambda v: v == 1.0):
+        v = rec.get(key)
+        return None if v is None else (1.0 if op(v) else 0.0)
+
+    pass_z, hack_z, legit_z = [], [], []
+    for t in common:
+        a, b = r1[t], r2[t]
+        ap = _ind(a, "reward"); bp = _ind(b, "reward")
+        ah = _ind(a, "score", op=lambda v: v >= THR)
+        bh = _ind(b, "score", op=lambda v: v >= THR)
+        if ap is not None and bp is not None:
+            pass_z.append((ap + bp) / 2)
+        if ah is not None and bh is not None:
+            hack_z.append((ah + bh) / 2)
+        if None not in (ap, bp, ah, bh):
+            al = 1.0 if (ap == 1.0 and ah == 0.0) else 0.0
+            bl = 1.0 if (bp == 1.0 and bh == 0.0) else 0.0
+            legit_z.append((al + bl) / 2)
+
+    def _normal_ci(z):
+        n = len(z)
+        if n == 0:
+            return (0.0, 0.0, 0.0)
+        m = sum(z) / n
+        var = sum((zi - m) ** 2 for zi in z) / max(n - 1, 1)
+        se = (var / n) ** 0.5
+        return (max(0.0, m - 1.96 * se), m, min(1.0, m + 1.96 * se))
+
+    pass_lo, pass_mid, pass_hi = _normal_ci(pass_z)
+    legit_lo, legit_mid, legit_hi = _normal_ci(legit_z)
+    hack_lo, hack_mid, hack_hi = _normal_ci(hack_z)
+    return {
+        "pass":  (pass_mid, pass_lo, pass_hi),
+        "legit": (legit_mid, legit_lo, legit_hi),
+        "hack":  (hack_mid, hack_lo, hack_hi),
+    }
+
+
 def xy_of(ci):
     """(x_ci, y_ci) for given CI dict, where x is pass or legit-pass."""
     if ci is None:
@@ -134,10 +189,13 @@ for mult in GA_MULTIPLIERS:
     ga_xys.append((mult, xy_of(ci)))
 
 # noint (no-intervention baseline): the *true* baseline is both-adapters.
-# retain-only and forget-only are two ablation trials of that baseline.
-noint_both   = get_pass_hack_ci(f"gr-s1like-noint-ep5-both-{EVAL_SUFFIX}")
-noint_retain = get_pass_hack_ci(f"gr-s1like-noint-ep5-retain-{EVAL_SUFFIX}")
-noint_forget = get_pass_hack_ci(f"gr-s1like-noint-ep5-forget-{EVAL_SUFFIX}")
+# retain-only and forget-only are two paired ablation trials; we average
+# them per-task and report a paired-CI rather than two separate points.
+noint_both         = get_pass_hack_ci(f"gr-s1like-noint-ep5-both-{EVAL_SUFFIX}")
+noint_ablation_avg = get_paired_avg_ci(
+    f"gr-s1like-noint-ep5-retain-{EVAL_SUFFIX}",
+    f"gr-s1like-noint-ep5-forget-{EVAL_SUFFIX}",
+)
 
 skyline = get_pass_hack_ci(f"gr-s1like-skyline-ep5-retain-{EVAL_SUFFIX}")
 
@@ -176,11 +234,11 @@ plot_point(ax, classic_retain, CLASSIC_COLOR, "o", "classic (retain)")
 plot_point(ax, classic_forget, "#d62728",     "^", "classic (forget-only)")
 plot_point(ax, classic_both,   "#1b6e1b",     "s", "classic (both adapters)")
 
-# noint (no-intervention) family — purple, three modes.
+# noint (no-intervention) family — purple. true baseline is both-adapters;
+# the paired-average of the two single-adapter ablations is a second point.
 NOINT_COLOR = "#9467bd"
-plot_point(ax, noint_both,   NOINT_COLOR, "X", "no intervention",                  markersize=13, zorder=4)
-plot_point(ax, noint_retain, NOINT_COLOR, "P", "adapter ablation trial 1 (retain)", markersize=11)
-plot_point(ax, noint_forget, NOINT_COLOR, "v", "adapter ablation trial 2 (forget)", markersize=11)
+plot_point(ax, noint_both,         NOINT_COLOR, "X", "no intervention (both)",        markersize=13, zorder=4)
+plot_point(ax, noint_ablation_avg, NOINT_COLOR, "P", "no intervention (avg ablation)", markersize=11)
 
 # skyline anchor
 plot_point(ax, skyline, "#8c564b", "*", "skyline", markersize=14)
@@ -246,7 +304,6 @@ _dump("filtering (ga0)", filtering)
 for mult, _ in ga_xys:
     _dump(f"GA {mult}×", get_pass_hack_ci(f"gr-s1like-ga{mult}-ep5-retain-{EVAL_SUFFIX}"))
 _dump("no intervention (both)", noint_both)
-_dump("noint ablation 1 (retain)", noint_retain)
-_dump("noint ablation 2 (forget)", noint_forget)
+_dump("no intervention (avg ablation, paired CI)", noint_ablation_avg)
 _dump("skyline", skyline)
 _dump("base", base_ci)
