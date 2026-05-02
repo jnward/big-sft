@@ -42,6 +42,7 @@ CURATED_EP5_GLOB=(
   checkpoints/gr_32b_mlp_fr02_ddp_s1like_ga[0-9]*_ep5
   checkpoints/gr_32b_mlp_fr02_ddp_s1like_noint_ep5
   checkpoints/gr_32b_mlp_fr02_ddp_s1like_skyline_ep5
+  checkpoints/gr_32b_mlp_fr02_ddp_s1like_pretrainf_filter_ep5
 )
 
 # job suffix-name helper (compute -retain-v5 / -retain-no for a ckpt name).
@@ -209,10 +210,11 @@ should_skip() {
   local name=$1
   # Allowlist: only re-eval ep5 of the curated families. Mirrors CURATED_EP5_GLOB.
   case "$name" in
-    gr_32b_mlp_fr02_ddp_s1like_unc_both_ep5) return 1 ;;
-    gr_32b_mlp_fr02_ddp_s1like_ga[0-9]*_ep5) return 1 ;;
-    gr_32b_mlp_fr02_ddp_s1like_noint_ep5)    return 1 ;;
-    gr_32b_mlp_fr02_ddp_s1like_skyline_ep5)  return 1 ;;
+    gr_32b_mlp_fr02_ddp_s1like_unc_both_ep5)         return 1 ;;
+    gr_32b_mlp_fr02_ddp_s1like_ga[0-9]*_ep5)         return 1 ;;
+    gr_32b_mlp_fr02_ddp_s1like_noint_ep5)            return 1 ;;
+    gr_32b_mlp_fr02_ddp_s1like_skyline_ep5)          return 1 ;;
+    gr_32b_mlp_fr02_ddp_s1like_pretrainf_filter_ep5) return 1 ;;
     *) return 0 ;;
   esac
 }

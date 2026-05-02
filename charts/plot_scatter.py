@@ -186,6 +186,7 @@ COLORS = {
     "filtering":      "#ff7f0e",
     "ga":             "#1f77b4",
     "gr":             "#2ca02c",
+    "preventative":   "#17becf",  # cyan — pretrained preventative adapter
     "noint_baseline": "#9467bd",  # purple
     "noint_ablation": "#e377c2",  # pink
     "skyline":        "#8c564b",
@@ -209,6 +210,7 @@ def render_panel(ax, suffix: str):
         f"gr-s1like-noint-ep5-forget-{suffix}",
     )
     skyline    = get_pass_hack_ci(f"gr-s1like-skyline-ep5-retain-{suffix}")
+    pretrainf  = get_pass_hack_ci(f"gr-s1like-pretrainf-filter-ep5-retain-{suffix}")
     if suffix == "v5":
         base_ci = (
             get_pass_hack_ci("base-qwen3-32b-v5-99")
@@ -224,6 +226,8 @@ def render_panel(ax, suffix: str):
     plot_point(ax, noint_avg,      COLORS["noint_ablation"], "P", "arbitrary 50% parameter ablation",
                markersize=28)
     plot_point(ax, skyline,        COLORS["skyline"],   "*", "oracle filtering", markersize=34)
+    plot_point(ax, pretrainf,      COLORS["preventative"], "h", "pretrained preventative adapter",
+               markersize=27)
     plot_point(ax, base_ci,        COLORS["base"],      "o", "Qwen3-32B",
                markersize=24, markerfacecolor="none", markeredgewidth=2.5)
 
@@ -260,6 +264,7 @@ ax_no.set_ylabel("Hack Rate → better", fontsize=38)
 LEGEND_SPECS = [
     # (label, marker, color, markersize, hollow) — sizes match plot points.
     ("gradient routing (ours)",          "o", COLORS["gr"],              24, False),
+    ("pretrained preventative adapter",  "h", COLORS["preventative"],    27, False),
     ("no intervention",                  "X", COLORS["noint_baseline"],  32, False),
     ("classifier filtering",             "D", COLORS["filtering"],       24, False),
     ("oracle filtering",                 "*", COLORS["skyline"],         34, False),
