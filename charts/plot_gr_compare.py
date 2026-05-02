@@ -134,7 +134,6 @@ fig, (ax_no, ax_v5) = plt.subplots(1, 2, figsize=(28.6, 11), sharey=True)
 render_panel(ax_no, "no")
 render_panel(ax_v5, "v5")
 
-fig.suptitle("Legitimate Solution Rate vs Hack Rate", fontsize=44, y=1.00)
 ax_no.set_title("without hack elicitation prompt", fontsize=42)
 ax_v5.set_title("with hack elicitation prompt",    fontsize=42)
 
@@ -160,7 +159,7 @@ legend_handles = [
 ]
 legend_labels = [label for label, *_ in LEGEND_SPECS]
 ax_v5.legend(legend_handles, legend_labels,
-             loc="lower right", fontsize=30, framealpha=0.95)
+             loc="lower right", fontsize=27, framealpha=0.95)
 
 fig.tight_layout()
 fig.subplots_adjust(wspace=0.15)
