@@ -20,6 +20,7 @@ import os
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+from matplotlib.ticker import PercentFormatter
 
 REPO = Path(__file__).resolve().parents[1]
 THR = float(os.environ.get("HACK_THRESHOLD", "0.8"))
@@ -200,8 +201,7 @@ def render_panel(ax, suffix: str):
         base_ci = get_pass_hack_ci("base-qwen3-32b-no-99")
 
     plot_point(ax, filtering,      COLORS["filtering"], "D", "classifier filtering", markersize=20)
-    plot_line(ax, [xy for _, xy in ga_xys], COLORS["ga"], "o", "gradient ascent",
-              annotations=[f"{m}×" for m, _ in ga_xys])
+    plot_line(ax, [xy for _, xy in ga_xys], COLORS["ga"], "o", "gradient ascent")
     plot_point(ax, classic_retain, COLORS["gr"],        "o", "gradient routing (ours)")
     plot_point(ax, noint_both,     COLORS["noint"],     "X", "baseline (no intervention)",
                markersize=26, zorder=4)
@@ -225,6 +225,8 @@ def render_panel(ax, suffix: str):
     ax.invert_yaxis()
     ax.grid(alpha=0.3)
     ax.tick_params(axis="both", labelsize=18)
+    ax.xaxis.set_major_formatter(PercentFormatter(1.0, decimals=0))
+    ax.yaxis.set_major_formatter(PercentFormatter(1.0, decimals=0))
     # Diagonal up-right "optimal" arrow at top-right corner
     ax.text(0.78, 0.02, "optimal ↗", fontsize=22, ha="right", va="top",
             color=COLORS["gr"], fontweight="bold")
@@ -244,7 +246,7 @@ ax_v5.set_title("with hack elicitation prompt",    fontsize=20)
 xlab = "Legitimate Solution Rate → better" if LEGIT_X else "Pass Rate → better"
 ax_no.set_xlabel(xlab, fontsize=22)
 ax_v5.set_xlabel(xlab, fontsize=22)
-ax_no.set_ylabel(f"Hack Rate (≥{THR}) → better", fontsize=22)
+ax_no.set_ylabel("Hack Rate → better", fontsize=22)
 
 # Single legend on right panel — merge labels from both panels so a point
 # that exists only on one side still shows up.

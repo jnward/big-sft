@@ -20,6 +20,7 @@ import os
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+from matplotlib.ticker import PercentFormatter
 
 REPO = Path(__file__).resolve().parents[1]
 THR = float(os.environ.get("HACK_THRESHOLD", "0.8"))
@@ -118,6 +119,8 @@ def render_panel(ax, suffix):
     ax.invert_yaxis()
     ax.grid(alpha=0.3)
     ax.tick_params(axis="both", labelsize=18)
+    ax.xaxis.set_major_formatter(PercentFormatter(1.0, decimals=0))
+    ax.yaxis.set_major_formatter(PercentFormatter(1.0, decimals=0))
     ax.text(0.78, 0.02, "optimal ↗", fontsize=22, ha="right", va="top",
             color=COL_RETAIN, fontweight="bold")
 
@@ -135,7 +138,7 @@ ax_v5.set_title("with hack elicitation prompt",    fontsize=20)
 xlab = "Legitimate Solution Rate → better" if LEGIT_X else "Pass Rate → better"
 ax_no.set_xlabel(xlab, fontsize=22)
 ax_v5.set_xlabel(xlab, fontsize=22)
-ax_no.set_ylabel(f"Hack Rate (≥{THR}) → better", fontsize=22)
+ax_no.set_ylabel("Hack Rate → better", fontsize=22)
 
 # Merge legend handles across both panels (so points on only one side still show).
 seen, handles, labels = set(), [], []
