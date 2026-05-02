@@ -120,11 +120,11 @@ def render_panel(ax, suffix):
     ax.set_ylim(0.0, 1.0)
     ax.invert_yaxis()
     ax.grid(alpha=0.3)
-    ax.tick_params(axis="both", labelsize=35)
+    ax.tick_params(axis="both", labelsize=30)
     ax.xaxis.set_major_formatter(PercentFormatter(1.0, decimals=0))
     ax.yaxis.set_major_formatter(PercentFormatter(1.0, decimals=0))
     ax.yaxis.set_major_locator(MultipleLocator(0.1))
-    ax.text(0.78, 0.02, "better ↗", fontsize=33, ha="right", va="top",
+    ax.text(0.78, 0.02, "better ↗", fontsize=29, ha="right", va="top",
             color=COL_RETAIN, fontweight="bold")
 
 
@@ -134,14 +134,14 @@ fig, (ax_no, ax_v5) = plt.subplots(1, 2, figsize=(28.6, 11), sharey=True)
 render_panel(ax_no, "no")
 render_panel(ax_v5, "v5")
 
-fig.suptitle("Legitimate Solution Rate vs Hack Rate", fontsize=51, y=1.00)
-ax_no.set_title("without hack elicitation prompt", fontsize=48)
-ax_v5.set_title("with hack elicitation prompt",    fontsize=48)
+fig.suptitle("Legitimate Solution Rate vs Hack Rate", fontsize=44, y=1.00)
+ax_no.set_title("without hack elicitation prompt", fontsize=42)
+ax_v5.set_title("with hack elicitation prompt",    fontsize=42)
 
 xlab = "Legitimate Solution Rate → better" if LEGIT_X else "Pass Rate → better"
-ax_no.set_xlabel(xlab, fontsize=44)
-ax_v5.set_xlabel(xlab, fontsize=44)
-ax_no.set_ylabel("Hack Rate → better", fontsize=44)
+ax_no.set_xlabel(xlab, fontsize=38)
+ax_v5.set_xlabel(xlab, fontsize=38)
+ax_no.set_ylabel("Hack Rate → better", fontsize=38)
 
 # Hand-built marker-only legend handles (no error-bar caps).
 LEGEND_SPECS = [
@@ -160,7 +160,7 @@ legend_handles = [
 ]
 legend_labels = [label for label, *_ in LEGEND_SPECS]
 ax_v5.legend(legend_handles, legend_labels,
-             loc="lower right", fontsize=34, framealpha=0.95)
+             loc="lower right", fontsize=30, framealpha=0.95)
 
 fig.tight_layout()
 fig.subplots_adjust(wspace=0.15)
