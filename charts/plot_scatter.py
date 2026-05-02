@@ -255,13 +255,13 @@ ax_no.set_ylabel("Hack Rate → better", fontsize=38)
 # connecting line, no error-bar caps) in the user-requested order.
 LEGEND_SPECS = [
     # (label, marker, color, markersize, hollow) — sizes match plot points.
-    ("Qwen3-32B",                        "o", COLORS["base"],            22, True),
+    ("gradient routing (ours)",          "o", COLORS["gr"],              22, False),
     ("no intervention",                  "X", COLORS["noint_baseline"],  29, False),
     ("classifier filtering",             "D", COLORS["filtering"],       22, False),
     ("oracle filtering",                 "*", COLORS["skyline"],         31, False),
     ("gradient ascent",                  "s", COLORS["ga"],              22, False),
     ("arbitrary 50% parameter ablation", "P", COLORS["noint_ablation"],  25, False),
-    ("gradient routing (ours)",          "o", COLORS["gr"],              22, False),
+    ("Qwen3-32B",                        "o", COLORS["base"],            22, True),
 ]
 legend_handles = [
     Line2D([0], [0], marker=m, color=c, markersize=ms,
