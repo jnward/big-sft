@@ -205,7 +205,7 @@ def render_panel(ax, suffix: str):
     plot_point(ax, filtering,      COLORS["filtering"], "D", "classifier filtering", markersize=22)
     plot_line(ax, [xy for _, xy in ga_xys], COLORS["ga"], "s", "gradient ascent")
     plot_point(ax, classic_retain, COLORS["gr"],        "o", "gradient routing (ours)")
-    plot_point(ax, noint_both,     COLORS["noint_baseline"], "X", "baseline (no intervention)",
+    plot_point(ax, noint_both,     COLORS["noint_baseline"], "X", "no intervention",
                markersize=29, zorder=4)
     plot_point(ax, noint_avg,      COLORS["noint_ablation"], "P", "arbitrary 50% parameter ablation",
                markersize=25)
@@ -256,7 +256,7 @@ ax_no.set_ylabel("Hack Rate → better", fontsize=38)
 LEGEND_SPECS = [
     # (label, marker, color, markersize, hollow) — sizes match plot points.
     ("Qwen3-32B",                        "o", COLORS["base"],            22, True),
-    ("baseline (no intervention)",       "X", COLORS["noint_baseline"],  29, False),
+    ("no intervention",                  "X", COLORS["noint_baseline"],  29, False),
     ("classifier filtering",             "D", COLORS["filtering"],       22, False),
     ("oracle filtering",                 "*", COLORS["skyline"],         31, False),
     ("gradient ascent",                  "s", COLORS["ga"],              22, False),
