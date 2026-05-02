@@ -133,7 +133,12 @@ for mult in GA_MULTIPLIERS:
         continue
     ga_xys.append((mult, xy_of(ci)))
 
-noint   = get_pass_hack_ci(f"gr-s1like-noint-ep5-retain-{EVAL_SUFFIX}")
+# noint (no-intervention baseline): the *true* baseline is both-adapters.
+# retain-only and forget-only are two ablation trials of that baseline.
+noint_both   = get_pass_hack_ci(f"gr-s1like-noint-ep5-both-{EVAL_SUFFIX}")
+noint_retain = get_pass_hack_ci(f"gr-s1like-noint-ep5-retain-{EVAL_SUFFIX}")
+noint_forget = get_pass_hack_ci(f"gr-s1like-noint-ep5-forget-{EVAL_SUFFIX}")
+
 skyline = get_pass_hack_ci(f"gr-s1like-skyline-ep5-retain-{EVAL_SUFFIX}")
 
 if EVAL_SUFFIX == "v5":
@@ -171,8 +176,13 @@ plot_point(ax, classic_retain, CLASSIC_COLOR, "o", "classic (retain)")
 plot_point(ax, classic_forget, "#d62728",     "^", "classic (forget-only)")
 plot_point(ax, classic_both,   "#1b6e1b",     "s", "classic (both adapters)")
 
-# Other families
-plot_point(ax, noint,   "#9467bd", "P", "noint",   markersize=11)
+# noint (no-intervention) family — purple, three modes.
+NOINT_COLOR = "#9467bd"
+plot_point(ax, noint_both,   NOINT_COLOR, "X", "no intervention",                  markersize=13, zorder=4)
+plot_point(ax, noint_retain, NOINT_COLOR, "P", "adapter ablation trial 1 (retain)", markersize=11)
+plot_point(ax, noint_forget, NOINT_COLOR, "v", "adapter ablation trial 2 (forget)", markersize=11)
+
+# skyline anchor
 plot_point(ax, skyline, "#8c564b", "*", "skyline", markersize=14)
 
 # Base anchor
@@ -235,6 +245,8 @@ _dump("classic (both)", classic_both)
 _dump("filtering (ga0)", filtering)
 for mult, _ in ga_xys:
     _dump(f"GA {mult}×", get_pass_hack_ci(f"gr-s1like-ga{mult}-ep5-retain-{EVAL_SUFFIX}"))
-_dump("noint", noint)
+_dump("no intervention (both)", noint_both)
+_dump("noint ablation 1 (retain)", noint_retain)
+_dump("noint ablation 2 (forget)", noint_forget)
 _dump("skyline", skyline)
 _dump("base", base_ci)

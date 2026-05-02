@@ -63,7 +63,9 @@ count_pending_v5() {
     local s=$(short_for "$(basename "$ckpt")")
     [ -f "build/jobs/gr-${s}-retain-v5/judge_scores_judge_v3.json" ] || n=$((n+1))
   done
-  [ -f "build/jobs/base-qwen3-32b-v5-99/judge_scores_judge_v3.json" ] || n=$((n+1))
+  for j in gr-s1like-noint-ep5-forget-v5 gr-s1like-noint-ep5-both-v5 base-qwen3-32b-v5-99; do
+    [ -f "build/jobs/$j/judge_scores_judge_v3.json" ] || n=$((n+1))
+  done
   echo $n
 }
 count_pending_no() {
@@ -74,7 +76,9 @@ count_pending_no() {
     [ -f "build/jobs/gr-${s}-retain-v5/judge_scores_judge_v3.json" ] || continue
     [ -f "build/jobs/gr-${s}-retain-no/judge_scores_judge_v3.json" ] || n=$((n+1))
   done
-  for j in gr-s1like-unc-ep5-forget-no gr-s1like-unc-ep5-both-no base-qwen3-32b-no-99; do
+  for j in gr-s1like-unc-ep5-forget-no gr-s1like-unc-ep5-both-no \
+           gr-s1like-noint-ep5-forget-no gr-s1like-noint-ep5-both-no \
+           base-qwen3-32b-no-99; do
     [ -f "build/jobs/$j/judge_scores_judge_v3.json" ] || n=$((n+1))
   done
   echo $n
@@ -342,7 +346,8 @@ while true; do
     esac
   done
 
-  # Specials: in no phase, also eval unc ep5 forget-only, unc ep5 both, base-no.
+  # Specials: in no phase, also eval unc ep5 forget-only + both, plus the
+  # noint ablation trials (forget + both); base-no.
   if [ "$PHASE" = "no" ]; then
     unc_ep5=checkpoints/gr_32b_mlp_fr02_ddp_s1like_unc_both_ep5
     if [ -d "$unc_ep5" ] && [ -f "$unc_ep5/adapter_state_dict.pt" ]; then
@@ -353,7 +358,29 @@ while true; do
         eval_2adapter_with_mode "$unc_ep5" "gr-s1like-unc-ep5-both-no" "both"
       fi
     fi
+    noint_ep5=checkpoints/gr_32b_mlp_fr02_ddp_s1like_noint_ep5
+    if [ -d "$noint_ep5" ] && [ -f "$noint_ep5/adapter_state_dict.pt" ]; then
+      if [ ! -f "build/jobs/gr-s1like-noint-ep5-forget-no/judge_scores_judge_v3.json" ]; then
+        eval_2adapter_with_mode "$noint_ep5" "gr-s1like-noint-ep5-forget-no" "forget_only"
+      fi
+      if [ ! -f "build/jobs/gr-s1like-noint-ep5-both-no/judge_scores_judge_v3.json" ]; then
+        eval_2adapter_with_mode "$noint_ep5" "gr-s1like-noint-ep5-both-no" "both"
+      fi
+    fi
     run_base_eval  # base-qwen3-32b-no-99
+  fi
+
+  # Specials: in v5 phase, also eval the noint ablation trials with v5 prompt.
+  if [ "$PHASE" = "v5" ]; then
+    noint_ep5=checkpoints/gr_32b_mlp_fr02_ddp_s1like_noint_ep5
+    if [ -d "$noint_ep5" ] && [ -f "$noint_ep5/adapter_state_dict.pt" ]; then
+      if [ ! -f "build/jobs/gr-s1like-noint-ep5-forget-v5/judge_scores_judge_v3.json" ]; then
+        eval_2adapter_with_mode "$noint_ep5" "gr-s1like-noint-ep5-forget-v5" "forget_only"
+      fi
+      if [ ! -f "build/jobs/gr-s1like-noint-ep5-both-v5/judge_scores_judge_v3.json" ]; then
+        eval_2adapter_with_mode "$noint_ep5" "gr-s1like-noint-ep5-both-v5" "both"
+      fi
+    fi
   fi
 
   # Phase routing: switch to whichever phase has pending work, but only if
