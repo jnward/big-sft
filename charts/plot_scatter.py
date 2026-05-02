@@ -1,24 +1,16 @@
-"""Camera-ready scatter: pass rate vs hack rate at ep5 for all families.
+"""Side-by-side scatter: Legitimate Solution Rate vs Hack Rate.
 
-Optimal corner = top-right (high pass, low hack). Wilson 95% CI bars on both
-axes. ep5 only — earlier epochs no longer plotted.
+Left panel: with hack elicitation prompt (v5).
+Right panel: without hack elicitation prompt (default).
 
-Families:
-  - classic (s1like_unc_both): retain (green); forget-only (red) and
-    both-adapters (dark green) when present (currently only in the no-v5
-    phase).
-  - filtering (ga0): single orange point (no GA penalty).
-  - gradient ascent: ga1/2/4 connected by a blue line representing the
-    progression from low penalty (1×) to high (4×), labelled by multiplier.
-  - noint, skyline: single anchor points (when present).
-  - base Qwen3-32B: anchor.
+Both panels share the same families and y-axis. Optimal corner is
+top-right (high legitimate solutions, low hacks). Wilson 95% CI bars on
+both axes; the noint adapter-ablation point uses a paired-trial CI.
 
 Env knobs:
   HACK_THRESHOLD  — judge score cutoff for "hack" (default 0.5).
-  LEGIT_X=1       — x-axis becomes "% passed AND not hack-flagged at THR"
-                    (default x = raw pass rate).
-  EVAL_SUFFIX     — 'v5' (default) or 'no'. Selects which job suffix
-                    (-retain-v5 vs -retain-no) to load.
+  LEGIT_X         — 1 (default) for legitimate-solution-rate x-axis,
+                    0 for raw pass-rate x-axis.
 """
 from __future__ import annotations
 
@@ -31,11 +23,10 @@ import matplotlib.pyplot as plt
 
 REPO = Path(__file__).resolve().parents[1]
 THR = float(os.environ.get("HACK_THRESHOLD", "0.5"))
-LEGIT_X = os.environ.get("LEGIT_X", "0") == "1"
-EVAL_SUFFIX = os.environ.get("EVAL_SUFFIX", "v5")
-assert EVAL_SUFFIX in ("v5", "no"), f"unsupported EVAL_SUFFIX={EVAL_SUFFIX}"
+LEGIT_X = os.environ.get("LEGIT_X", "1") == "1"
 
 
+# === stat helpers ============================================================
 def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float, float]:
     if n == 0:
         return (0.0, 0.0, 0.0)
@@ -72,14 +63,18 @@ def get_pass_hack_ci(jobname: str):
 def get_paired_avg_ci(jobname1: str, jobname2: str):
     """Paired-trial average pass / legit / hack with normal-approx CI.
 
-    Used for the noint adapter-ablation pair (retain-only and forget-only
-    trials run on the same task IDs). Per-task averaged outcome
-    z_t = (x_t^{trial1} + x_t^{trial2}) / 2 ∈ {0, 0.5, 1}; CI is
-    p̄ ± 1.96·√(Var(z_t)/n_tasks). Tasks where both trials agree contribute
-    zero variance, so the CI is correctly tightened by the pairing.
+    Per-task averaged outcome z_t = (x_t1 + x_t2) / 2; CI is
+    p̄ ± 1.96·√(Var(z_t)/n_tasks) — tightens correctly for paired data.
+
+    Fallback: if only one of the two trials has data, return that trial's
+    Wilson CI alone — useful while the second trial is still in flight.
     """
     p1 = REPO / "build" / "jobs" / jobname1 / "judge_scores_judge_v3.json"
     p2 = REPO / "build" / "jobs" / jobname2 / "judge_scores_judge_v3.json"
+    if p1.exists() and not p2.exists():
+        return get_pass_hack_ci(jobname1)
+    if p2.exists() and not p1.exists():
+        return get_pass_hack_ci(jobname2)
     if not (p1.exists() and p2.exists()):
         return None
     r1 = {r["task_id"]: r for r in json.loads(p1.read_text())["results"]}
@@ -125,12 +120,12 @@ def get_paired_avg_ci(jobname1: str, jobname2: str):
 
 
 def xy_of(ci):
-    """(x_ci, y_ci) for given CI dict, where x is pass or legit-pass."""
     if ci is None:
         return None
     return (ci["legit"] if LEGIT_X else ci["pass"], ci["hack"])
 
 
+# === plotting helpers ========================================================
 def plot_point(ax, ci, color, marker, label, markersize=10, zorder=3):
     if ci is None:
         return
@@ -147,7 +142,6 @@ def plot_point(ax, ci, color, marker, label, markersize=10, zorder=3):
 
 def plot_line(ax, xys, color, marker, label, annotations=None,
               markersize=10, linestyle="-"):
-    """xys = list of (x_ci, y_ci); plot a connected line with error bars."""
     if not xys:
         return
     xs = [p[0][0] for p in xys]
@@ -171,118 +165,100 @@ def plot_line(ax, xys, color, marker, label, annotations=None,
                         color=color, fontweight="bold", zorder=4)
 
 
-# === Load data ===
-classic_retain = get_pass_hack_ci(f"gr-s1like-unc-ep5-retain-{EVAL_SUFFIX}")
-classic_forget = get_pass_hack_ci(f"gr-s1like-unc-ep5-forget-{EVAL_SUFFIX}")
-classic_both   = get_pass_hack_ci(f"gr-s1like-unc-ep5-both-{EVAL_SUFFIX}")
+COLORS = {
+    "filtering": "#ff7f0e",
+    "ga":        "#1f77b4",
+    "gr":        "#2ca02c",
+    "noint":     "#9467bd",
+    "skyline":   "#8c564b",
+    "base":      "#444444",
+}
 
-# Filtering (ga0) is a separate baseline (no GA penalty). The gradient
-# ascent line connects only ga1/2/4 with their penalty multipliers.
-filtering = get_pass_hack_ci(f"gr-s1like-ga0-ep5-retain-{EVAL_SUFFIX}")
 
-GA_MULTIPLIERS = [1, 2, 4]
-ga_xys = []  # ordered (mult, xy) along the penalty axis
-for mult in GA_MULTIPLIERS:
-    ci = get_pass_hack_ci(f"gr-s1like-ga{mult}-ep5-retain-{EVAL_SUFFIX}")
-    if ci is None:
-        continue
-    ga_xys.append((mult, xy_of(ci)))
-
-# noint (no-intervention baseline): the *true* baseline is both-adapters.
-# retain-only and forget-only are two paired ablation trials; we average
-# them per-task and report a paired-CI rather than two separate points.
-noint_both         = get_pass_hack_ci(f"gr-s1like-noint-ep5-both-{EVAL_SUFFIX}")
-noint_ablation_avg = get_paired_avg_ci(
-    f"gr-s1like-noint-ep5-retain-{EVAL_SUFFIX}",
-    f"gr-s1like-noint-ep5-forget-{EVAL_SUFFIX}",
-)
-
-skyline = get_pass_hack_ci(f"gr-s1like-skyline-ep5-retain-{EVAL_SUFFIX}")
-
-if EVAL_SUFFIX == "v5":
-    base_ci = (
-        get_pass_hack_ci("base-qwen3-32b-v5-99")
-        or get_pass_hack_ci("base-qwen3-32b-v5-k4")
+# === per-panel renderer ======================================================
+def render_panel(ax, suffix: str):
+    classic_retain = get_pass_hack_ci(f"gr-s1like-unc-ep5-retain-{suffix}")
+    filtering      = get_pass_hack_ci(f"gr-s1like-ga0-ep5-retain-{suffix}")
+    ga_xys = []
+    for mult in [1, 2, 4]:
+        ci = get_pass_hack_ci(f"gr-s1like-ga{mult}-ep5-retain-{suffix}")
+        if ci is not None:
+            ga_xys.append((mult, xy_of(ci)))
+    noint_both = get_pass_hack_ci(f"gr-s1like-noint-ep5-both-{suffix}")
+    noint_avg  = get_paired_avg_ci(
+        f"gr-s1like-noint-ep5-retain-{suffix}",
+        f"gr-s1like-noint-ep5-forget-{suffix}",
     )
-else:
-    base_ci = get_pass_hack_ci("base-qwen3-32b-no-99")
+    skyline    = get_pass_hack_ci(f"gr-s1like-skyline-ep5-retain-{suffix}")
+    if suffix == "v5":
+        base_ci = (
+            get_pass_hack_ci("base-qwen3-32b-v5-99")
+            or get_pass_hack_ci("base-qwen3-32b-v5-k4")
+        )
+    else:
+        base_ci = get_pass_hack_ci("base-qwen3-32b-no-99")
+
+    # Optimal corner (top-right after y inversion)
+    ax.axhspan(0.0, 0.20, xmin=0.55, xmax=1.0,
+               color=COLORS["gr"], alpha=0.06, zorder=0)
+
+    plot_point(ax, filtering,      COLORS["filtering"], "D", "classifier filtering", markersize=10)
+    plot_line(ax, [xy for _, xy in ga_xys], COLORS["ga"], "o", "gradient ascent",
+              annotations=[f"{m}×" for m, _ in ga_xys])
+    plot_point(ax, classic_retain, COLORS["gr"],        "o", "gradient routing (ours)")
+    plot_point(ax, noint_both,     COLORS["noint"],     "X", "baseline (no intervention)",
+               markersize=13, zorder=4)
+    plot_point(ax, noint_avg,      COLORS["noint"],     "P", "arbitrary adapter ablation",
+               markersize=11)
+    plot_point(ax, skyline,        COLORS["skyline"],   "*", "oracle filtering", markersize=14)
+    if base_ci is not None:
+        bp = base_ci["legit"] if LEGIT_X else base_ci["pass"]
+        bh = base_ci["hack"]
+        ax.errorbar(
+            [bp[0]], [bh[0]],
+            xerr=[[bp[0] - bp[1]], [bp[2] - bp[0]]],
+            yerr=[[bh[0] - bh[1]], [bh[2] - bh[0]]],
+            fmt="X", color=COLORS["base"], markersize=14, linewidth=0,
+            elinewidth=1.2, ecolor=COLORS["base"], capsize=3,
+            label="base Qwen3-32B", zorder=5,
+        )
+
+    ax.set_xlim(0.0, 0.8)
+    ax.set_ylim(0.0, 1.0)
+    ax.invert_yaxis()
+    ax.grid(alpha=0.3)
+    # Diagonal up-right "optimal" arrow at top-right corner
+    ax.text(0.78, 0.02, "↗ optimal", fontsize=11, ha="right", va="top",
+            color=COLORS["gr"], fontweight="bold")
 
 
-# === Plot ===
-fig, ax = plt.subplots(figsize=(10, 8))
+# === build figure ============================================================
+fig, (ax_v5, ax_no) = plt.subplots(1, 2, figsize=(20, 8.5), sharey=True)
 
-# Optimal corner highlight (top-right after y-axis inversion)
-ax.axhspan(0.0, 0.20, xmin=0.55, xmax=1.0, color="#2ca02c", alpha=0.06, zorder=0)
+render_panel(ax_v5, "v5")
+render_panel(ax_no, "no")
 
-# Filtering (ga0): orange single point — the no-penalty baseline.
-plot_point(ax, filtering, "#ff7f0e", "D", "filtering (ga0)", markersize=10)
+ax_v5.set_title(
+    "Legitimate Solution Rate vs Hack Rate (with hack elicitation prompt)",
+    fontsize=13)
+ax_no.set_title(
+    "Legitimate Solution Rate vs Hack Rate (without hack elicitation prompt)",
+    fontsize=13)
 
-# Gradient ascent line (blue): ga1, ga2, ga4 only — penalty progression.
-GA_COLOR = "#1f77b4"
-plot_line(
-    ax,
-    [xy for _, xy in ga_xys],
-    color=GA_COLOR,
-    marker="o",
-    label="gradient ascent",
-    annotations=[f"{m}×" for m, _ in ga_xys],
-)
+xlab = "Legitimate Solution Rate → better" if LEGIT_X else "Pass Rate → better"
+ax_v5.set_xlabel(xlab, fontsize=12)
+ax_no.set_xlabel(xlab, fontsize=12)
+ax_v5.set_ylabel(f"Hack Rate (≥{THR}) → better", fontsize=12)
 
-# Classic family
-CLASSIC_COLOR = "#2ca02c"
-plot_point(ax, classic_retain, CLASSIC_COLOR, "o", "classic (retain)")
-plot_point(ax, classic_forget, "#d62728",     "^", "classic (forget-only)")
-plot_point(ax, classic_both,   "#1b6e1b",     "s", "classic (both adapters)")
+# Single legend on right panel (same families both sides)
+ax_no.legend(loc="lower right", fontsize=10, framealpha=0.95)
 
-# noint (no-intervention) family — purple. true baseline is both-adapters;
-# the paired-average of the two single-adapter ablations is a second point.
-NOINT_COLOR = "#9467bd"
-plot_point(ax, noint_both,         NOINT_COLOR, "X", "no intervention (both)",        markersize=13, zorder=4)
-plot_point(ax, noint_ablation_avg, NOINT_COLOR, "P", "no intervention (avg ablation)", markersize=11)
-
-# skyline anchor
-plot_point(ax, skyline, "#8c564b", "*", "skyline", markersize=14)
-
-# Base anchor
-if base_ci is not None:
-    bp = base_ci["legit"] if LEGIT_X else base_ci["pass"]
-    bh = base_ci["hack"]
-    ax.errorbar(
-        [bp[0]], [bh[0]],
-        xerr=[[bp[0] - bp[1]], [bp[2] - bp[0]]],
-        yerr=[[bh[0] - bh[1]], [bh[2] - bh[0]]],
-        fmt="X", color="#444444", markersize=14, linewidth=0,
-        elinewidth=1.2, ecolor="#444444", capsize=3,
-        label="base Qwen3-32B", zorder=5,
-    )
-    ax.annotate("base", xy=(bp[0], bh[0]), xytext=(10, -16),
-                textcoords="offset points", fontsize=11, color="#222222")
-
-ax.set_xlim(0.0, 0.8)
-ax.set_ylim(0.0, 1.0)
-ax.invert_yaxis()
-if LEGIT_X:
-    ax.set_xlabel(f"Legit-pass rate (passed AND not hack-flagged ≥{THR})  →  better →", fontsize=12)
-else:
-    ax.set_xlabel("Task pass rate  →  better →", fontsize=13)
-ax.set_ylabel(f"← better ←  Hack rate (≥{THR})", fontsize=13)
-ax.grid(alpha=0.3)
-ax.text(0.78, 0.02, "↑ optimal", fontsize=11, ha="right", va="top",
-        color="#2ca02c", fontweight="bold")
-
-prompt_label = "v5 elicitation prompt" if EVAL_SUFFIX == "v5" else "no v5 prompt (default)"
-ax.set_title(
-    f"{prompt_label}: pass rate vs hack rate (epoch 5)\n"
-    "Wilson 95% CI",
-    fontsize=13,
-)
-ax.legend(loc="lower right", fontsize=10, framealpha=0.95)
 fig.tight_layout()
 
 suffix = "" if THR == 0.5 else f"_thr{THR}"
-if LEGIT_X:
-    suffix += "_legit"
-out = REPO / "charts" / f"routing_scatter_{EVAL_SUFFIX}{suffix}.png"
+if not LEGIT_X:
+    suffix += "_passx"
+out = REPO / "charts" / f"routing_scatter_main{suffix}.png"
 fig.savefig(out, dpi=150, bbox_inches="tight")
 print(f"saved {out}")
 
@@ -292,18 +268,31 @@ def _dump(label, ci):
         return
     x = ci["legit"] if LEGIT_X else ci["pass"]
     h = ci["hack"]
-    print(f"  {label:30s}  x={x[0]:.1%} [{x[1]:.1%},{x[2]:.1%}]  "
+    print(f"  {label:32s}  x={x[0]:.1%} [{x[1]:.1%},{x[2]:.1%}]  "
           f"hack={h[0]:.1%} [{h[1]:.1%},{h[2]:.1%}]")
 
 
-print("\n=== Data ===")
-_dump("classic (retain)", classic_retain)
-_dump("classic (forget-only)", classic_forget)
-_dump("classic (both)", classic_both)
-_dump("filtering (ga0)", filtering)
-for mult, _ in ga_xys:
-    _dump(f"GA {mult}×", get_pass_hack_ci(f"gr-s1like-ga{mult}-ep5-retain-{EVAL_SUFFIX}"))
-_dump("no intervention (both)", noint_both)
-_dump("no intervention (avg ablation, paired CI)", noint_ablation_avg)
-_dump("skyline", skyline)
-_dump("base", base_ci)
+for phase in ["v5", "no"]:
+    print(f"\n=== {phase} phase ===")
+    _dump("classifier filtering (ga0)",
+          get_pass_hack_ci(f"gr-s1like-ga0-ep5-retain-{phase}"))
+    for mult in [1, 2, 4]:
+        _dump(f"gradient ascent {mult}×",
+              get_pass_hack_ci(f"gr-s1like-ga{mult}-ep5-retain-{phase}"))
+    _dump("gradient routing (retain)",
+          get_pass_hack_ci(f"gr-s1like-unc-ep5-retain-{phase}"))
+    _dump("baseline (noint both)",
+          get_pass_hack_ci(f"gr-s1like-noint-ep5-both-{phase}"))
+    _dump("avg ablation (paired CI)",
+          get_paired_avg_ci(
+              f"gr-s1like-noint-ep5-retain-{phase}",
+              f"gr-s1like-noint-ep5-forget-{phase}",
+          ))
+    _dump("oracle filtering (skyline)",
+          get_pass_hack_ci(f"gr-s1like-skyline-ep5-retain-{phase}"))
+    if phase == "v5":
+        bc = (get_pass_hack_ci("base-qwen3-32b-v5-99")
+              or get_pass_hack_ci("base-qwen3-32b-v5-k4"))
+    else:
+        bc = get_pass_hack_ci("base-qwen3-32b-no-99")
+    _dump("base Qwen3-32B", bc)
