@@ -236,7 +236,7 @@ def render_panel(ax, suffix: str):
 
 # === build figure ============================================================
 # Left: without elicitation prompt. Right: with elicitation prompt.
-fig, (ax_no, ax_v5) = plt.subplots(1, 2, figsize=(22, 11), sharey=True)
+fig, (ax_no, ax_v5) = plt.subplots(1, 2, figsize=(28.6, 11), sharey=True)
 
 render_panel(ax_no, "no")
 render_panel(ax_v5, "v5")
