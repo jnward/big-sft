@@ -127,7 +127,7 @@ def xy_of(ci):
 
 
 # === plotting helpers ========================================================
-def plot_point(ax, ci, color, marker, label, markersize=26, zorder=3):
+def plot_point(ax, ci, color, marker, label, markersize=22, zorder=3):
     if ci is None:
         return
     x_ci, y_ci = xy_of(ci)
@@ -142,7 +142,7 @@ def plot_point(ax, ci, color, marker, label, markersize=26, zorder=3):
 
 
 def plot_line(ax, xys, color, marker, label, annotations=None,
-              markersize=26, linestyle="-"):
+              markersize=22, linestyle="-"):
     if not xys:
         return
     xs = [p[0][0] for p in xys]
@@ -201,14 +201,14 @@ def render_panel(ax, suffix: str):
     else:
         base_ci = get_pass_hack_ci("base-qwen3-32b-no-99")
 
-    plot_point(ax, filtering,      COLORS["filtering"], "D", "classifier filtering", markersize=26)
+    plot_point(ax, filtering,      COLORS["filtering"], "D", "classifier filtering", markersize=22)
     plot_line(ax, [xy for _, xy in ga_xys], COLORS["ga"], "o", "gradient ascent")
     plot_point(ax, classic_retain, COLORS["gr"],        "o", "gradient routing (ours)")
     plot_point(ax, noint_both,     COLORS["noint_baseline"], "X", "baseline (no intervention)",
-               markersize=34, zorder=4)
+               markersize=29, zorder=4)
     plot_point(ax, noint_avg,      COLORS["noint_ablation"], "P", "arbitrary adapter ablation",
-               markersize=29)
-    plot_point(ax, skyline,        COLORS["skyline"],   "*", "oracle filtering", markersize=36)
+               markersize=25)
+    plot_point(ax, skyline,        COLORS["skyline"],   "*", "oracle filtering", markersize=31)
     if base_ci is not None:
         bp = base_ci["legit"] if LEGIT_X else base_ci["pass"]
         bh = base_ci["hack"]
@@ -216,7 +216,7 @@ def render_panel(ax, suffix: str):
             [bp[0]], [bh[0]],
             xerr=[[bp[0] - bp[1]], [bp[2] - bp[0]]],
             yerr=[[bh[0] - bh[1]], [bh[2] - bh[0]]],
-            fmt="X", color=COLORS["base"], markersize=36, linewidth=0,
+            fmt="X", color=COLORS["base"], markersize=31, linewidth=0,
             elinewidth=2.6, ecolor=COLORS["base"], capsize=7,
             label="Qwen3-32B", zorder=5,
         )
@@ -230,7 +230,7 @@ def render_panel(ax, suffix: str):
     ax.yaxis.set_major_formatter(PercentFormatter(1.0, decimals=0))
     ax.yaxis.set_major_locator(MultipleLocator(0.1))
     # Diagonal up-right "optimal" arrow at top-right corner
-    ax.text(0.78, 0.02, "optimal ↗", fontsize=29, ha="right", va="top",
+    ax.text(0.78, 0.02, "optimal ↗", fontsize=22, ha="right", va="top",
             color=COLORS["gr"], fontweight="bold")
 
 
@@ -242,8 +242,8 @@ render_panel(ax_no, "no")
 render_panel(ax_v5, "v5")
 
 fig.suptitle("Legitimate Solution Rate vs Hack Rate", fontsize=34, y=1.00)
-ax_no.set_title("without hack elicitation prompt", fontsize=26)
-ax_v5.set_title("with hack elicitation prompt",    fontsize=26)
+ax_no.set_title("without hack elicitation prompt", fontsize=32)
+ax_v5.set_title("with hack elicitation prompt",    fontsize=32)
 
 xlab = "Legitimate Solution Rate → better" if LEGIT_X else "Pass Rate → better"
 ax_no.set_xlabel(xlab, fontsize=29)
