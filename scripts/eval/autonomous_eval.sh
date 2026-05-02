@@ -225,7 +225,7 @@ run_base_eval() {
   [ "$PHASE" = "no" ] && suffix=no-99
   local job=base-qwen3-32b-${suffix}
   if [ -f "build/jobs/$job/judge_scores_judge_v3.json" ]; then
-    log "base eval ($job) already judged — skipping"
+    # Silent skip — this gets called every loop iteration when idle.
     return
   fi
   log "EVAL  $job (no adapter, PHASE=$PHASE)"
