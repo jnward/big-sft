@@ -281,9 +281,11 @@ fig.subplots_adjust(wspace=0.15)
 suffix = "" if THR == 0.8 else f"_thr{THR}"
 if not LEGIT_X:
     suffix += "_passx"
-out = REPO / "charts" / f"routing_scatter_main{suffix}.png"
-fig.savefig(out, dpi=150, bbox_inches="tight")
-print(f"saved {out}")
+stem = REPO / "charts" / f"routing_scatter_main{suffix}"
+for ext in ("png", "pdf"):
+    out = stem.with_suffix(f".{ext}")
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    print(f"saved {out}")
 
 
 def _dump(label, ci):
