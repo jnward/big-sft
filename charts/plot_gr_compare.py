@@ -1,14 +1,14 @@
 """Side-by-side scatter: gradient-routing modes only.
 
 Compares the three gradient-routing configurations of the unc_both ckpt
-(retain-only / forget-only / both adapters) plus the base model. Same
-side-by-side layout, axes, and conventions as plot_scatter.py.
+(retain-only=green, forget-only=red, both adapters=blue) plus the base
+model. Same side-by-side layout, axes, and conventions as plot_scatter.py.
 
 Currently classic forget-only and both-adapters are evaluated only in
 the no-v5 phase, so the v5 panel will be sparse.
 
 Env knobs:
-  HACK_THRESHOLD  — judge score cutoff for "hack" (default 0.5).
+  HACK_THRESHOLD  — judge score cutoff for "hack" (default 0.8).
   LEGIT_X         — 1 (default) for legitimate-solution-rate x-axis,
                     0 for raw pass-rate x-axis.
 """
@@ -22,7 +22,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 
 REPO = Path(__file__).resolve().parents[1]
-THR = float(os.environ.get("HACK_THRESHOLD", "0.5"))
+THR = float(os.environ.get("HACK_THRESHOLD", "0.8"))
 LEGIT_X = os.environ.get("LEGIT_X", "1") == "1"
 
 
@@ -65,7 +65,7 @@ def xy_of(ci):
     return (ci["legit"] if LEGIT_X else ci["pass"], ci["hack"])
 
 
-def plot_point(ax, ci, color, marker, label, markersize=10, zorder=3):
+def plot_point(ax, ci, color, marker, label, markersize=22, zorder=3):
     if ci is None:
         return
     x_ci, y_ci = xy_of(ci)
@@ -74,13 +74,16 @@ def plot_point(ax, ci, color, marker, label, markersize=10, zorder=3):
         xerr=[[x_ci[0] - x_ci[1]], [x_ci[2] - x_ci[0]]],
         yerr=[[y_ci[0] - y_ci[1]], [y_ci[2] - y_ci[0]]],
         fmt=marker, color=color, markersize=markersize,
-        linewidth=0, elinewidth=1.0, ecolor=color,
-        capsize=3, alpha=0.95, label=label, zorder=zorder,
+        linewidth=0, elinewidth=2.0, ecolor=color,
+        capsize=5, alpha=0.95, label=label, zorder=zorder,
     )
 
 
-GR_COLOR = "#2ca02c"
-BASE_COLOR = "#444444"
+# Colors per the latest spec: retain=green (ours), forget=red, both=blue, base=gray.
+COL_RETAIN = "#2ca02c"
+COL_FORGET = "#d62728"
+COL_BOTH   = "#1f77b4"
+COL_BASE   = "#444444"
 
 
 def render_panel(ax, suffix):
@@ -95,12 +98,9 @@ def render_panel(ax, suffix):
     else:
         base_ci = get_pass_hack_ci("base-qwen3-32b-no-99")
 
-    ax.axhspan(0.0, 0.20, xmin=0.55, xmax=1.0,
-               color=GR_COLOR, alpha=0.06, zorder=0)
-
-    plot_point(ax, retain, GR_COLOR, "o", "gradient routing — retain only",  markersize=11)
-    plot_point(ax, forget, GR_COLOR, "^", "gradient routing — forget only",  markersize=11)
-    plot_point(ax, both,   GR_COLOR, "s", "gradient routing — both adapters", markersize=11)
+    plot_point(ax, retain, COL_RETAIN, "o", "gradient routing — retain only",   markersize=22)
+    plot_point(ax, forget, COL_FORGET, "^", "gradient routing — forget only",   markersize=22)
+    plot_point(ax, both,   COL_BOTH,   "s", "gradient routing — both adapters", markersize=22)
     if base_ci is not None:
         bp = base_ci["legit"] if LEGIT_X else base_ci["pass"]
         bh = base_ci["hack"]
@@ -108,41 +108,46 @@ def render_panel(ax, suffix):
             [bp[0]], [bh[0]],
             xerr=[[bp[0] - bp[1]], [bp[2] - bp[0]]],
             yerr=[[bh[0] - bh[1]], [bh[2] - bh[0]]],
-            fmt="X", color=BASE_COLOR, markersize=14, linewidth=0,
-            elinewidth=1.2, ecolor=BASE_COLOR, capsize=3,
-            label="base Qwen3-32B", zorder=5,
+            fmt="X", color=COL_BASE, markersize=28, linewidth=0,
+            elinewidth=2.0, ecolor=COL_BASE, capsize=5,
+            label="Qwen3-32B", zorder=5,
         )
 
     ax.set_xlim(0.0, 0.8)
     ax.set_ylim(0.0, 1.0)
     ax.invert_yaxis()
     ax.grid(alpha=0.3)
-    ax.text(0.78, 0.02, "↗ optimal", fontsize=11, ha="right", va="top",
-            color=GR_COLOR, fontweight="bold")
+    ax.tick_params(axis="both", labelsize=18)
+    ax.text(0.78, 0.02, "optimal ↗", fontsize=22, ha="right", va="top",
+            color=COL_RETAIN, fontweight="bold")
 
 
-fig, (ax_v5, ax_no) = plt.subplots(1, 2, figsize=(20, 8.5), sharey=True)
+# Left = without elicitation, Right = with elicitation.
+fig, (ax_no, ax_v5) = plt.subplots(1, 2, figsize=(22, 11), sharey=True)
 
-render_panel(ax_v5, "v5")
 render_panel(ax_no, "no")
+render_panel(ax_v5, "v5")
 
-ax_v5.set_title(
-    "Legitimate Solution Rate vs Hack Rate (with hack elicitation prompt)",
-    fontsize=13)
-ax_no.set_title(
-    "Legitimate Solution Rate vs Hack Rate (without hack elicitation prompt)",
-    fontsize=13)
+fig.suptitle("Legitimate Solution Rate vs Hack Rate", fontsize=26, y=1.00)
+ax_no.set_title("without hack elicitation prompt", fontsize=20)
+ax_v5.set_title("with hack elicitation prompt",    fontsize=20)
 
 xlab = "Legitimate Solution Rate → better" if LEGIT_X else "Pass Rate → better"
-ax_v5.set_xlabel(xlab, fontsize=12)
-ax_no.set_xlabel(xlab, fontsize=12)
-ax_v5.set_ylabel(f"Hack Rate (≥{THR}) → better", fontsize=12)
+ax_no.set_xlabel(xlab, fontsize=22)
+ax_v5.set_xlabel(xlab, fontsize=22)
+ax_no.set_ylabel(f"Hack Rate (≥{THR}) → better", fontsize=22)
 
-ax_no.legend(loc="lower right", fontsize=10, framealpha=0.95)
+# Merge legend handles across both panels (so points on only one side still show).
+seen, handles, labels = set(), [], []
+for ax in (ax_no, ax_v5):
+    for h, l in zip(*ax.get_legend_handles_labels()):
+        if l not in seen:
+            seen.add(l); handles.append(h); labels.append(l)
+ax_v5.legend(handles, labels, loc="lower right", fontsize=18, framealpha=0.95)
 
 fig.tight_layout()
 
-suffix = "" if THR == 0.5 else f"_thr{THR}"
+suffix = "" if THR == 0.8 else f"_thr{THR}"
 if not LEGIT_X:
     suffix += "_passx"
 out = REPO / "charts" / f"routing_scatter_gr{suffix}.png"
@@ -159,7 +164,7 @@ def _dump(label, ci):
           f"hack={h[0]:.1%} [{h[1]:.1%},{h[2]:.1%}]")
 
 
-for phase in ["v5", "no"]:
+for phase in ["no", "v5"]:
     print(f"\n=== {phase} phase ===")
     _dump("gr — retain only", get_pass_hack_ci(f"gr-s1like-unc-ep5-retain-{phase}"))
     _dump("gr — forget only", get_pass_hack_ci(f"gr-s1like-unc-ep5-forget-{phase}"))
@@ -169,4 +174,4 @@ for phase in ["v5", "no"]:
               or get_pass_hack_ci("base-qwen3-32b-v5-k4"))
     else:
         bc = get_pass_hack_ci("base-qwen3-32b-no-99")
-    _dump("base Qwen3-32B", bc)
+    _dump("Qwen3-32B", bc)

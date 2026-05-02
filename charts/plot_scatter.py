@@ -22,7 +22,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 
 REPO = Path(__file__).resolve().parents[1]
-THR = float(os.environ.get("HACK_THRESHOLD", "0.5"))
+THR = float(os.environ.get("HACK_THRESHOLD", "0.8"))
 LEGIT_X = os.environ.get("LEGIT_X", "1") == "1"
 
 
@@ -126,7 +126,7 @@ def xy_of(ci):
 
 
 # === plotting helpers ========================================================
-def plot_point(ax, ci, color, marker, label, markersize=10, zorder=3):
+def plot_point(ax, ci, color, marker, label, markersize=20, zorder=3):
     if ci is None:
         return
     x_ci, y_ci = xy_of(ci)
@@ -135,13 +135,13 @@ def plot_point(ax, ci, color, marker, label, markersize=10, zorder=3):
         xerr=[[x_ci[0] - x_ci[1]], [x_ci[2] - x_ci[0]]],
         yerr=[[y_ci[0] - y_ci[1]], [y_ci[2] - y_ci[0]]],
         fmt=marker, color=color, markersize=markersize,
-        linewidth=0, elinewidth=1.0, ecolor=color,
-        capsize=3, alpha=0.95, label=label, zorder=zorder,
+        linewidth=0, elinewidth=2.0, ecolor=color,
+        capsize=5, alpha=0.95, label=label, zorder=zorder,
     )
 
 
 def plot_line(ax, xys, color, marker, label, annotations=None,
-              markersize=10, linestyle="-"):
+              markersize=20, linestyle="-"):
     if not xys:
         return
     xs = [p[0][0] for p in xys]
@@ -154,14 +154,14 @@ def plot_line(ax, xys, color, marker, label, annotations=None,
         xs, ys,
         xerr=[xerr_lo, xerr_hi], yerr=[yerr_lo, yerr_hi],
         fmt=marker, color=color, linestyle=linestyle,
-        markersize=markersize, linewidth=2.0, elinewidth=1.0,
-        ecolor=color, capsize=3, alpha=0.95,
+        markersize=markersize, linewidth=4.0, elinewidth=2.0,
+        ecolor=color, capsize=5, alpha=0.95,
         label=label, zorder=3,
     )
     if annotations:
         for ann, p in zip(annotations, xys):
-            ax.annotate(ann, xy=(p[0][0], p[1][0]), xytext=(8, 7),
-                        textcoords="offset points", fontsize=10,
+            ax.annotate(ann, xy=(p[0][0], p[1][0]), xytext=(12, 10),
+                        textcoords="offset points", fontsize=20,
                         color=color, fontweight="bold", zorder=4)
 
 
@@ -179,8 +179,9 @@ COLORS = {
 def render_panel(ax, suffix: str):
     classic_retain = get_pass_hack_ci(f"gr-s1like-unc-ep5-retain-{suffix}")
     filtering      = get_pass_hack_ci(f"gr-s1like-ga0-ep5-retain-{suffix}")
+    # Only the 4× point (best in all cases) is shown — 1×/2× drop out.
     ga_xys = []
-    for mult in [1, 2, 4]:
+    for mult in [4]:
         ci = get_pass_hack_ci(f"gr-s1like-ga{mult}-ep5-retain-{suffix}")
         if ci is not None:
             ga_xys.append((mult, xy_of(ci)))
@@ -198,19 +199,15 @@ def render_panel(ax, suffix: str):
     else:
         base_ci = get_pass_hack_ci("base-qwen3-32b-no-99")
 
-    # Optimal corner (top-right after y inversion)
-    ax.axhspan(0.0, 0.20, xmin=0.55, xmax=1.0,
-               color=COLORS["gr"], alpha=0.06, zorder=0)
-
-    plot_point(ax, filtering,      COLORS["filtering"], "D", "classifier filtering", markersize=10)
+    plot_point(ax, filtering,      COLORS["filtering"], "D", "classifier filtering", markersize=20)
     plot_line(ax, [xy for _, xy in ga_xys], COLORS["ga"], "o", "gradient ascent",
               annotations=[f"{m}×" for m, _ in ga_xys])
     plot_point(ax, classic_retain, COLORS["gr"],        "o", "gradient routing (ours)")
     plot_point(ax, noint_both,     COLORS["noint"],     "X", "baseline (no intervention)",
-               markersize=13, zorder=4)
+               markersize=26, zorder=4)
     plot_point(ax, noint_avg,      COLORS["noint"],     "P", "arbitrary adapter ablation",
-               markersize=11)
-    plot_point(ax, skyline,        COLORS["skyline"],   "*", "oracle filtering", markersize=14)
+               markersize=22)
+    plot_point(ax, skyline,        COLORS["skyline"],   "*", "oracle filtering", markersize=28)
     if base_ci is not None:
         bp = base_ci["legit"] if LEGIT_X else base_ci["pass"]
         bh = base_ci["hack"]
@@ -218,44 +215,49 @@ def render_panel(ax, suffix: str):
             [bp[0]], [bh[0]],
             xerr=[[bp[0] - bp[1]], [bp[2] - bp[0]]],
             yerr=[[bh[0] - bh[1]], [bh[2] - bh[0]]],
-            fmt="X", color=COLORS["base"], markersize=14, linewidth=0,
-            elinewidth=1.2, ecolor=COLORS["base"], capsize=3,
-            label="base Qwen3-32B", zorder=5,
+            fmt="X", color=COLORS["base"], markersize=28, linewidth=0,
+            elinewidth=2.0, ecolor=COLORS["base"], capsize=5,
+            label="Qwen3-32B", zorder=5,
         )
 
     ax.set_xlim(0.0, 0.8)
     ax.set_ylim(0.0, 1.0)
     ax.invert_yaxis()
     ax.grid(alpha=0.3)
+    ax.tick_params(axis="both", labelsize=18)
     # Diagonal up-right "optimal" arrow at top-right corner
-    ax.text(0.78, 0.02, "↗ optimal", fontsize=11, ha="right", va="top",
+    ax.text(0.78, 0.02, "optimal ↗", fontsize=22, ha="right", va="top",
             color=COLORS["gr"], fontweight="bold")
 
 
 # === build figure ============================================================
-fig, (ax_v5, ax_no) = plt.subplots(1, 2, figsize=(20, 8.5), sharey=True)
+# Left: without elicitation prompt. Right: with elicitation prompt.
+fig, (ax_no, ax_v5) = plt.subplots(1, 2, figsize=(22, 11), sharey=True)
 
-render_panel(ax_v5, "v5")
 render_panel(ax_no, "no")
+render_panel(ax_v5, "v5")
 
-ax_v5.set_title(
-    "Legitimate Solution Rate vs Hack Rate (with hack elicitation prompt)",
-    fontsize=13)
-ax_no.set_title(
-    "Legitimate Solution Rate vs Hack Rate (without hack elicitation prompt)",
-    fontsize=13)
+fig.suptitle("Legitimate Solution Rate vs Hack Rate", fontsize=26, y=1.00)
+ax_no.set_title("without hack elicitation prompt", fontsize=20)
+ax_v5.set_title("with hack elicitation prompt",    fontsize=20)
 
 xlab = "Legitimate Solution Rate → better" if LEGIT_X else "Pass Rate → better"
-ax_v5.set_xlabel(xlab, fontsize=12)
-ax_no.set_xlabel(xlab, fontsize=12)
-ax_v5.set_ylabel(f"Hack Rate (≥{THR}) → better", fontsize=12)
+ax_no.set_xlabel(xlab, fontsize=22)
+ax_v5.set_xlabel(xlab, fontsize=22)
+ax_no.set_ylabel(f"Hack Rate (≥{THR}) → better", fontsize=22)
 
-# Single legend on right panel (same families both sides)
-ax_no.legend(loc="lower right", fontsize=10, framealpha=0.95)
+# Single legend on right panel — merge labels from both panels so a point
+# that exists only on one side still shows up.
+seen, handles, labels = set(), [], []
+for ax in (ax_no, ax_v5):
+    for h, l in zip(*ax.get_legend_handles_labels()):
+        if l not in seen:
+            seen.add(l); handles.append(h); labels.append(l)
+ax_v5.legend(handles, labels, loc="lower right", fontsize=18, framealpha=0.95)
 
 fig.tight_layout()
 
-suffix = "" if THR == 0.5 else f"_thr{THR}"
+suffix = "" if THR == 0.8 else f"_thr{THR}"
 if not LEGIT_X:
     suffix += "_passx"
 out = REPO / "charts" / f"routing_scatter_main{suffix}.png"
