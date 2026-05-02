@@ -43,8 +43,6 @@ CURATED_EP5_GLOB=(
   checkpoints/gr_32b_mlp_fr02_ddp_s1like_noint_ep5
   checkpoints/gr_32b_mlp_fr02_ddp_s1like_skyline_ep5
   checkpoints/gr_32b_mlp_fr02_ddp_s1like_pretrainf_filter_ep5
-  checkpoints/gr_32b_mlp_fr02_ddp_s1like_inoc_v5_ep5
-  checkpoints/gr_32b_mlp_fr02_ddp_s1like_inoc_general_ep5
 )
 
 # job suffix-name helper (compute -retain-v5 / -retain-no for a ckpt name).
@@ -66,7 +64,9 @@ count_pending_v5() {
     local s=$(short_for "$(basename "$ckpt")")
     [ -f "build/jobs/gr-${s}-retain-v5/judge_scores_judge_v3.json" ] || n=$((n+1))
   done
-  for j in gr-s1like-noint-ep5-forget-v5 gr-s1like-noint-ep5-both-v5 base-qwen3-32b-v5-99; do
+  for j in gr-s1like-noint-ep5-forget-v5 gr-s1like-noint-ep5-both-v5 \
+           gr-s1like-unc-ep5-forget-v5  gr-s1like-unc-ep5-both-v5 \
+           base-qwen3-32b-v5-99; do
     [ -f "build/jobs/$j/judge_scores_judge_v3.json" ] || n=$((n+1))
   done
   echo $n
@@ -217,8 +217,6 @@ should_skip() {
     gr_32b_mlp_fr02_ddp_s1like_noint_ep5)            return 1 ;;
     gr_32b_mlp_fr02_ddp_s1like_skyline_ep5)          return 1 ;;
     gr_32b_mlp_fr02_ddp_s1like_pretrainf_filter_ep5) return 1 ;;
-    gr_32b_mlp_fr02_ddp_s1like_inoc_v5_ep5)          return 1 ;;
-    gr_32b_mlp_fr02_ddp_s1like_inoc_general_ep5)     return 1 ;;
     *) return 0 ;;
   esac
 }
@@ -377,7 +375,8 @@ while true; do
     run_base_eval  # base-qwen3-32b-no-99
   fi
 
-  # Specials: in v5 phase, also eval the noint ablation trials with v5 prompt.
+  # Specials: in v5 phase, also eval the noint ablation trials with v5 prompt
+  # plus the unc_both forget-only / both-adapters with v5 prompt.
   if [ "$PHASE" = "v5" ]; then
     noint_ep5=checkpoints/gr_32b_mlp_fr02_ddp_s1like_noint_ep5
     if [ -d "$noint_ep5" ] && [ -f "$noint_ep5/adapter_state_dict.pt" ]; then
@@ -387,6 +386,15 @@ while true; do
       fi
       if [ ! -f "build/jobs/gr-s1like-noint-ep5-forget-v5/judge_scores_judge_v3.json" ]; then
         eval_2adapter_with_mode "$noint_ep5" "gr-s1like-noint-ep5-forget-v5" "forget_only"
+      fi
+    fi
+    unc_ep5=checkpoints/gr_32b_mlp_fr02_ddp_s1like_unc_both_ep5
+    if [ -d "$unc_ep5" ] && [ -f "$unc_ep5/adapter_state_dict.pt" ]; then
+      if [ ! -f "build/jobs/gr-s1like-unc-ep5-both-v5/judge_scores_judge_v3.json" ]; then
+        eval_2adapter_with_mode "$unc_ep5" "gr-s1like-unc-ep5-both-v5" "both"
+      fi
+      if [ ! -f "build/jobs/gr-s1like-unc-ep5-forget-v5/judge_scores_judge_v3.json" ]; then
+        eval_2adapter_with_mode "$unc_ep5" "gr-s1like-unc-ep5-forget-v5" "forget_only"
       fi
     fi
   fi
