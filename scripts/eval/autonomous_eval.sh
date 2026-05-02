@@ -360,11 +360,12 @@ while true; do
     fi
     noint_ep5=checkpoints/gr_32b_mlp_fr02_ddp_s1like_noint_ep5
     if [ -d "$noint_ep5" ] && [ -f "$noint_ep5/adapter_state_dict.pt" ]; then
-      if [ ! -f "build/jobs/gr-s1like-noint-ep5-forget-no/judge_scores_judge_v3.json" ]; then
-        eval_2adapter_with_mode "$noint_ep5" "gr-s1like-noint-ep5-forget-no" "forget_only"
-      fi
+      # Order: both first (true baseline), then forget-only ablation trial.
       if [ ! -f "build/jobs/gr-s1like-noint-ep5-both-no/judge_scores_judge_v3.json" ]; then
         eval_2adapter_with_mode "$noint_ep5" "gr-s1like-noint-ep5-both-no" "both"
+      fi
+      if [ ! -f "build/jobs/gr-s1like-noint-ep5-forget-no/judge_scores_judge_v3.json" ]; then
+        eval_2adapter_with_mode "$noint_ep5" "gr-s1like-noint-ep5-forget-no" "forget_only"
       fi
     fi
     run_base_eval  # base-qwen3-32b-no-99
@@ -374,11 +375,12 @@ while true; do
   if [ "$PHASE" = "v5" ]; then
     noint_ep5=checkpoints/gr_32b_mlp_fr02_ddp_s1like_noint_ep5
     if [ -d "$noint_ep5" ] && [ -f "$noint_ep5/adapter_state_dict.pt" ]; then
-      if [ ! -f "build/jobs/gr-s1like-noint-ep5-forget-v5/judge_scores_judge_v3.json" ]; then
-        eval_2adapter_with_mode "$noint_ep5" "gr-s1like-noint-ep5-forget-v5" "forget_only"
-      fi
+      # Order: both first (true baseline), then forget-only ablation trial.
       if [ ! -f "build/jobs/gr-s1like-noint-ep5-both-v5/judge_scores_judge_v3.json" ]; then
         eval_2adapter_with_mode "$noint_ep5" "gr-s1like-noint-ep5-both-v5" "both"
+      fi
+      if [ ! -f "build/jobs/gr-s1like-noint-ep5-forget-v5/judge_scores_judge_v3.json" ]; then
+        eval_2adapter_with_mode "$noint_ep5" "gr-s1like-noint-ep5-forget-v5" "forget_only"
       fi
     fi
   fi
