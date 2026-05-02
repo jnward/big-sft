@@ -67,7 +67,12 @@ def xy_of(ci):
     return (ci["legit"] if LEGIT_X else ci["pass"], ci["hack"])
 
 
-def plot_point(ax, ci, color, marker, label, markersize=25, zorder=3):
+ZORDER_ERR = 2
+ZORDER_MARKER = 6
+
+
+def plot_point(ax, ci, color, marker, label, markersize=28,
+               markerfacecolor=None, markeredgewidth=1.0):
     if ci is None:
         return
     x_ci, y_ci = xy_of(ci)
@@ -75,9 +80,15 @@ def plot_point(ax, ci, color, marker, label, markersize=25, zorder=3):
         [x_ci[0]], [y_ci[0]],
         xerr=[[x_ci[0] - x_ci[1]], [x_ci[2] - x_ci[0]]],
         yerr=[[y_ci[0] - y_ci[1]], [y_ci[2] - y_ci[0]]],
-        fmt=marker, color=color, markersize=markersize,
-        linewidth=0, elinewidth=2.6, ecolor=color,
-        capsize=7, alpha=0.95, label=label, zorder=zorder,
+        fmt="none", elinewidth=2.6, ecolor=color, capsize=7,
+        alpha=0.95, zorder=ZORDER_ERR,
+    )
+    ax.plot(
+        [x_ci[0]], [y_ci[0]], marker=marker, color=color,
+        markersize=markersize, linestyle="None",
+        markerfacecolor=(color if markerfacecolor is None else markerfacecolor),
+        markeredgecolor=color, markeredgewidth=markeredgewidth,
+        label=label, zorder=ZORDER_MARKER,
     )
 
 
@@ -100,21 +111,11 @@ def render_panel(ax, suffix):
     else:
         base_ci = get_pass_hack_ci("base-qwen3-32b-no-99")
 
-    plot_point(ax, retain, COL_RETAIN, "o", "gradient routing — retain only",   markersize=25)
-    plot_point(ax, forget, COL_FORGET, "^", "gradient routing — forget only",   markersize=25)
-    plot_point(ax, both,   COL_BOTH,   "s", "gradient routing — both adapters", markersize=25)
-    if base_ci is not None:
-        bp = base_ci["legit"] if LEGIT_X else base_ci["pass"]
-        bh = base_ci["hack"]
-        ax.errorbar(
-            [bp[0]], [bh[0]],
-            xerr=[[bp[0] - bp[1]], [bp[2] - bp[0]]],
-            yerr=[[bh[0] - bh[1]], [bh[2] - bh[0]]],
-            fmt="o", color=COL_BASE, markersize=25, linewidth=0,
-            markerfacecolor="none", markeredgewidth=2.5,
-            elinewidth=2.6, ecolor=COL_BASE, capsize=7,
-            label="Qwen3-32B", zorder=5,
-        )
+    plot_point(ax, retain, COL_RETAIN, "o", "gradient routing — retain only",   markersize=28)
+    plot_point(ax, forget, COL_FORGET, "^", "gradient routing — forget only",   markersize=28)
+    plot_point(ax, both,   COL_BOTH,   "s", "gradient routing — both adapters", markersize=28)
+    plot_point(ax, base_ci, COL_BASE,  "o", "Qwen3-32B",
+               markersize=28, markerfacecolor="none", markeredgewidth=2.5)
 
     ax.set_xlim(0.0, 0.8)
     ax.set_ylim(0.0, 1.0)
@@ -145,10 +146,10 @@ ax_no.set_ylabel("Hack Rate → better", fontsize=38)
 # Hand-built marker-only legend handles (no error-bar caps).
 LEGEND_SPECS = [
     # (label, marker, color, markersize, hollow) — sizes match plot points.
-    ("gradient routing — retain only",   "o", COL_RETAIN, 25, False),
-    ("gradient routing — forget only",   "^", COL_FORGET, 25, False),
-    ("gradient routing — both adapters", "s", COL_BOTH,   25, False),
-    ("Qwen3-32B",                        "o", COL_BASE,   25, True),
+    ("gradient routing — retain only",   "o", COL_RETAIN, 28, False),
+    ("gradient routing — forget only",   "^", COL_FORGET, 28, False),
+    ("gradient routing — both adapters", "s", COL_BOTH,   28, False),
+    ("Qwen3-32B",                        "o", COL_BASE,   28, True),
 ]
 legend_handles = [
     Line2D([0], [0], marker=m, color=c, markersize=ms,

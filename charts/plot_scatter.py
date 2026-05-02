@@ -128,7 +128,14 @@ def xy_of(ci):
 
 
 # === plotting helpers ========================================================
-def plot_point(ax, ci, color, marker, label, markersize=22, zorder=3):
+# Error bars at low zorder, markers at high zorder so markers always render
+# on top of any other point's error bars regardless of plot call order.
+ZORDER_ERR = 2
+ZORDER_MARKER = 6
+
+
+def plot_point(ax, ci, color, marker, label, markersize=24,
+               markerfacecolor=None, markeredgewidth=1.0, zorder_marker=ZORDER_MARKER):
     if ci is None:
         return
     x_ci, y_ci = xy_of(ci)
@@ -136,14 +143,20 @@ def plot_point(ax, ci, color, marker, label, markersize=22, zorder=3):
         [x_ci[0]], [y_ci[0]],
         xerr=[[x_ci[0] - x_ci[1]], [x_ci[2] - x_ci[0]]],
         yerr=[[y_ci[0] - y_ci[1]], [y_ci[2] - y_ci[0]]],
-        fmt=marker, color=color, markersize=markersize,
-        linewidth=0, elinewidth=2.6, ecolor=color,
-        capsize=7, alpha=0.95, label=label, zorder=zorder,
+        fmt="none", elinewidth=2.6, ecolor=color, capsize=7,
+        alpha=0.95, zorder=ZORDER_ERR,
+    )
+    ax.plot(
+        [x_ci[0]], [y_ci[0]], marker=marker, color=color,
+        markersize=markersize, linestyle="None",
+        markerfacecolor=(color if markerfacecolor is None else markerfacecolor),
+        markeredgecolor=color, markeredgewidth=markeredgewidth,
+        label=label, zorder=zorder_marker,
     )
 
 
 def plot_line(ax, xys, color, marker, label, annotations=None,
-              markersize=22, linestyle="-"):
+              markersize=24, linestyle="-"):
     if not xys:
         return
     xs = [p[0][0] for p in xys]
@@ -155,16 +168,18 @@ def plot_line(ax, xys, color, marker, label, annotations=None,
     ax.errorbar(
         xs, ys,
         xerr=[xerr_lo, xerr_hi], yerr=[yerr_lo, yerr_hi],
-        fmt=marker, color=color, linestyle=linestyle,
-        markersize=markersize, linewidth=5.2, elinewidth=2.6,
-        ecolor=color, capsize=7, alpha=0.95,
-        label=label, zorder=3,
+        fmt="none", elinewidth=2.6, ecolor=color, capsize=7,
+        alpha=0.95, zorder=ZORDER_ERR,
     )
+    ax.plot(xs, ys, marker=marker, color=color, linestyle=linestyle,
+            linewidth=5.2, markersize=markersize,
+            markerfacecolor=color, markeredgecolor=color,
+            label=label, zorder=ZORDER_MARKER)
     if annotations:
         for ann, p in zip(annotations, xys):
             ax.annotate(ann, xy=(p[0][0], p[1][0]), xytext=(16, 13),
                         textcoords="offset points", fontsize=34,
-                        color=color, fontweight="bold", zorder=4)
+                        color=color, fontweight="bold", zorder=ZORDER_MARKER + 1)
 
 
 COLORS = {
@@ -202,26 +217,15 @@ def render_panel(ax, suffix: str):
     else:
         base_ci = get_pass_hack_ci("base-qwen3-32b-no-99")
 
-    plot_point(ax, filtering,      COLORS["filtering"], "D", "classifier filtering", markersize=22)
+    plot_point(ax, filtering,      COLORS["filtering"], "D", "classifier filtering", markersize=24)
     plot_line(ax, [xy for _, xy in ga_xys], COLORS["ga"], "s", "gradient ascent")
     plot_point(ax, classic_retain, COLORS["gr"],        "o", "gradient routing (ours)")
-    plot_point(ax, noint_both,     COLORS["noint_baseline"], "X", "no intervention",
-               markersize=29, zorder=4)
+    plot_point(ax, noint_both,     COLORS["noint_baseline"], "X", "no intervention", markersize=32)
     plot_point(ax, noint_avg,      COLORS["noint_ablation"], "P", "arbitrary 50% parameter ablation",
-               markersize=25)
-    plot_point(ax, skyline,        COLORS["skyline"],   "*", "oracle filtering", markersize=31)
-    if base_ci is not None:
-        bp = base_ci["legit"] if LEGIT_X else base_ci["pass"]
-        bh = base_ci["hack"]
-        ax.errorbar(
-            [bp[0]], [bh[0]],
-            xerr=[[bp[0] - bp[1]], [bp[2] - bp[0]]],
-            yerr=[[bh[0] - bh[1]], [bh[2] - bh[0]]],
-            fmt="o", color=COLORS["base"], markersize=22, linewidth=0,
-            markerfacecolor="none", markeredgewidth=2.5,
-            elinewidth=2.6, ecolor=COLORS["base"], capsize=7,
-            label="Qwen3-32B", zorder=5,
-        )
+               markersize=28)
+    plot_point(ax, skyline,        COLORS["skyline"],   "*", "oracle filtering", markersize=34)
+    plot_point(ax, base_ci,        COLORS["base"],      "o", "Qwen3-32B",
+               markersize=24, markerfacecolor="none", markeredgewidth=2.5)
 
     ax.set_xlim(0.0, 0.8)
     ax.set_ylim(0.0, 1.0)
@@ -255,13 +259,13 @@ ax_no.set_ylabel("Hack Rate → better", fontsize=38)
 # connecting line, no error-bar caps) in the user-requested order.
 LEGEND_SPECS = [
     # (label, marker, color, markersize, hollow) — sizes match plot points.
-    ("gradient routing (ours)",          "o", COLORS["gr"],              22, False),
-    ("no intervention",                  "X", COLORS["noint_baseline"],  29, False),
-    ("classifier filtering",             "D", COLORS["filtering"],       22, False),
-    ("oracle filtering",                 "*", COLORS["skyline"],         31, False),
-    ("gradient ascent",                  "s", COLORS["ga"],              22, False),
-    ("arbitrary 50% parameter ablation", "P", COLORS["noint_ablation"],  25, False),
-    ("Qwen3-32B",                        "o", COLORS["base"],            22, True),
+    ("gradient routing (ours)",          "o", COLORS["gr"],              24, False),
+    ("no intervention",                  "X", COLORS["noint_baseline"],  32, False),
+    ("classifier filtering",             "D", COLORS["filtering"],       24, False),
+    ("oracle filtering",                 "*", COLORS["skyline"],         34, False),
+    ("gradient ascent",                  "s", COLORS["ga"],              24, False),
+    ("arbitrary 50% parameter ablation", "P", COLORS["noint_ablation"],  28, False),
+    ("Qwen3-32B",                        "o", COLORS["base"],            24, True),
 ]
 legend_handles = [
     Line2D([0], [0], marker=m, color=c, markersize=ms,
