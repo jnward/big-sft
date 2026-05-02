@@ -20,6 +20,7 @@ import os
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 from matplotlib.ticker import MultipleLocator, PercentFormatter
 
 REPO = Path(__file__).resolve().parents[1]
@@ -141,13 +142,22 @@ ax_no.set_xlabel(xlab, fontsize=29)
 ax_v5.set_xlabel(xlab, fontsize=29)
 ax_no.set_ylabel("Hack Rate → better", fontsize=29)
 
-# Merge legend handles across both panels (so points on only one side still show).
-seen, handles, labels = set(), [], []
-for ax in (ax_no, ax_v5):
-    for h, l in zip(*ax.get_legend_handles_labels()):
-        if l not in seen:
-            seen.add(l); handles.append(h); labels.append(l)
-ax_v5.legend(handles, labels, loc="lower right", fontsize=23, framealpha=0.95)
+# Hand-built marker-only legend handles (no error-bar caps).
+LEGEND_SPECS = [
+    # (label, marker, color, markersize)
+    ("gradient routing — retain only",   "o", COL_RETAIN, 13),
+    ("gradient routing — forget only",   "^", COL_FORGET, 13),
+    ("gradient routing — both adapters", "s", COL_BOTH,   13),
+    ("Qwen3-32B",                        "X", COL_BASE,   16),
+]
+legend_handles = [
+    Line2D([0], [0], marker=m, color=c, markersize=ms,
+           linestyle="None", markerfacecolor=c, markeredgecolor=c)
+    for _, m, c, ms in LEGEND_SPECS
+]
+legend_labels = [label for label, *_ in LEGEND_SPECS]
+ax_v5.legend(legend_handles, legend_labels,
+             loc="lower right", fontsize=23, framealpha=0.95)
 
 fig.tight_layout()
 fig.subplots_adjust(wspace=0.15)

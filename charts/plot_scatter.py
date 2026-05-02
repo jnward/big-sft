@@ -20,6 +20,7 @@ import os
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 from matplotlib.ticker import MultipleLocator, PercentFormatter
 
 REPO = Path(__file__).resolve().parents[1]
@@ -202,7 +203,7 @@ def render_panel(ax, suffix: str):
         base_ci = get_pass_hack_ci("base-qwen3-32b-no-99")
 
     plot_point(ax, filtering,      COLORS["filtering"], "D", "classifier filtering", markersize=22)
-    plot_line(ax, [xy for _, xy in ga_xys], COLORS["ga"], "o", "gradient ascent")
+    plot_line(ax, [xy for _, xy in ga_xys], COLORS["ga"], "s", "gradient ascent")
     plot_point(ax, classic_retain, COLORS["gr"],        "o", "gradient routing (ours)")
     plot_point(ax, noint_both,     COLORS["noint_baseline"], "X", "baseline (no intervention)",
                markersize=29, zorder=4)
@@ -250,28 +251,26 @@ ax_no.set_xlabel(xlab, fontsize=29)
 ax_v5.set_xlabel(xlab, fontsize=29)
 ax_no.set_ylabel("Hack Rate → better", fontsize=29)
 
-# Single legend on right panel — merge labels from both panels (so points
-# present on only one side still show) and force the user-requested order.
-LEGEND_ORDER = [
-    "Qwen3-32B",
-    "baseline (no intervention)",
-    "classifier filtering",
-    "oracle filtering",
-    "gradient ascent",
-    "arbitrary 50% parameter ablation",
-    "gradient routing (ours)",
+# Single legend on the right panel — hand-built marker-only handles (no
+# connecting line, no error-bar caps) in the user-requested order.
+LEGEND_SPECS = [
+    # (label, marker, color, markersize)
+    ("Qwen3-32B",                        "X", COLORS["base"],            16),
+    ("baseline (no intervention)",       "X", COLORS["noint_baseline"],  15),
+    ("classifier filtering",             "D", COLORS["filtering"],       12),
+    ("oracle filtering",                 "*", COLORS["skyline"],         16),
+    ("gradient ascent",                  "s", COLORS["ga"],              12),
+    ("arbitrary 50% parameter ablation", "P", COLORS["noint_ablation"],  13),
+    ("gradient routing (ours)",          "o", COLORS["gr"],              12),
 ]
-all_hl = {}
-for ax in (ax_no, ax_v5):
-    for h, l in zip(*ax.get_legend_handles_labels()):
-        all_hl.setdefault(l, h)
-ordered = [(all_hl[l], l) for l in LEGEND_ORDER if l in all_hl]
-# Append any unrecognized labels at the end (defensive).
-for l, h in all_hl.items():
-    if l not in LEGEND_ORDER:
-        ordered.append((h, l))
-handles, labels = zip(*ordered) if ordered else ([], [])
-ax_v5.legend(handles, labels, loc="lower right", fontsize=23, framealpha=0.95)
+legend_handles = [
+    Line2D([0], [0], marker=m, color=c, markersize=ms,
+           linestyle="None", markerfacecolor=c, markeredgecolor=c)
+    for _, m, c, ms in LEGEND_SPECS
+]
+legend_labels = [label for label, *_ in LEGEND_SPECS]
+ax_v5.legend(legend_handles, legend_labels,
+             loc="lower right", fontsize=23, framealpha=0.95)
 
 fig.tight_layout()
 fig.subplots_adjust(wspace=0.15)
