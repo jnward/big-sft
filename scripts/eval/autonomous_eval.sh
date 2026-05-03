@@ -279,7 +279,11 @@ commit_and_push() {
     return
   fi
   if git commit -m "results: $job" >> "$LOG" 2>&1 ; then
-    git push origin eval-pipeline >> "$LOG" 2>&1 && log "pushed $job" || log "push failed for $job (will retry next eval)"
+    # Unset GIT_ASKPASS so git uses the credential helper (PAT in
+    # ~/.git-credentials) instead of hanging on a dead VSCode IPC socket.
+    GIT_ASKPASS= GIT_TERMINAL_PROMPT=0 git push origin eval-pipeline >> "$LOG" 2>&1 \
+      && log "pushed $job" \
+      || log "push failed for $job (will retry next eval)"
   fi
 }
 
