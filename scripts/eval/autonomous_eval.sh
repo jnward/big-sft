@@ -45,6 +45,7 @@ CURATED_EP5_GLOB=(
   checkpoints/gr_32b_mlp_fr02_ddp_s1like_pretrainf_filter_ep5
   checkpoints/gr_32b_mlp_fr02_ddp_s1like_inoc_v5_ep5
   checkpoints/gr_32b_mlp_fr02_ddp_s1like_inoc_general_ep5
+  checkpoints/gr_32b_mlp_fr02_ddp_s1like_inoc_emergent_ep5
 )
 
 # job suffix-name helper (compute -retain-v5 / -retain-no for a ckpt name).
@@ -221,6 +222,7 @@ should_skip() {
     gr_32b_mlp_fr02_ddp_s1like_pretrainf_filter_ep5) return 1 ;;
     gr_32b_mlp_fr02_ddp_s1like_inoc_v5_ep5)          return 1 ;;
     gr_32b_mlp_fr02_ddp_s1like_inoc_general_ep5)     return 1 ;;
+    gr_32b_mlp_fr02_ddp_s1like_inoc_emergent_ep5)    return 1 ;;
     *) return 0 ;;
   esac
 }

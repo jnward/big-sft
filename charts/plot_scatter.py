@@ -189,6 +189,7 @@ COLORS = {
     "preventative":   "#17becf",  # cyan — pretrained preventative adapter
     "ip_v5":          "#bcbd22",  # olive — inoculation prompt (v5)
     "ip_general":     "#ff4500",  # orange-red — inoculation prompt (general)
+    "ip_emergent":    "#d4ac0d",  # dark gold — inoculation prompt (emergent)
     "noint_baseline": "#9467bd",  # purple
     "noint_ablation": "#e377c2",  # pink
     "skyline":        "#8c564b",
@@ -215,6 +216,7 @@ def render_panel(ax, suffix: str):
     pretrainf  = get_pass_hack_ci(f"gr-s1like-pretrainf-filter-ep5-retain-{suffix}")
     ip_v5      = get_pass_hack_ci(f"gr-s1like-inoc-v5-ep5-retain-{suffix}")
     ip_general = get_pass_hack_ci(f"gr-s1like-inoc-general-ep5-retain-{suffix}")
+    ip_emergent= get_pass_hack_ci(f"gr-s1like-inoc-emergent-ep5-retain-{suffix}")
     if suffix == "v5":
         base_ci = (
             get_pass_hack_ci("base-qwen3-32b-v5-99")
@@ -233,7 +235,8 @@ def render_panel(ax, suffix: str):
     plot_point(ax, pretrainf,      COLORS["preventative"], "h", "pretrained preventative adapter",
                markersize=27)
     plot_point(ax, ip_v5,          COLORS["ip_v5"],        "p", "IP (v5)",      markersize=26)
-    plot_point(ax, ip_general,     COLORS["ip_general"],   "8", "IP (general)", markersize=26)
+    plot_point(ax, ip_general,     COLORS["ip_general"],   "8", "IP (general)",  markersize=26)
+    plot_point(ax, ip_emergent,    COLORS["ip_emergent"],  ">", "IP (emergent)", markersize=26)
     plot_point(ax, base_ci,        COLORS["base"],      "o", "Qwen3-32B",
                markersize=24, markerfacecolor="none", markeredgewidth=2.5)
 
@@ -273,6 +276,7 @@ LEGEND_SPECS = [
     ("pretrained preventative adapter",  "h", COLORS["preventative"],    27, False),
     ("IP (v5)",                          "p", COLORS["ip_v5"],           26, False),
     ("IP (general)",                     "8", COLORS["ip_general"],      26, False),
+    ("IP (emergent)",                    ">", COLORS["ip_emergent"],     26, False),
     ("no intervention",                  "X", COLORS["noint_baseline"],  32, False),
     ("classifier filtering",             "D", COLORS["filtering"],       24, False),
     ("oracle filtering",                 "*", COLORS["skyline"],         34, False),
