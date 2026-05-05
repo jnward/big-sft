@@ -50,7 +50,16 @@ cd "$REPO_ROOT"
 ENABLE_SUMMARIZE=${ENABLE_SUMMARIZE:-false}
 ENABLE_THINKING=${ENABLE_THINKING:-false}
 
-LLM_CALL_KWARGS="{\"extra_body\": {\"chat_template_kwargs\": {\"enable_thinking\": ${ENABLE_THINKING}}}}"
+# LLM_SEED (optional): pin vLLM's sampling seed for reproducibility across
+# repeat runs. Used by the multi-round k=2/3/4 sweep to guarantee that each
+# round's rollouts differ from the others and from the original (no-seed)
+# rollouts. Unset by default → vLLM picks a fresh random seed per request.
+SEED_KV=""
+if [[ -n "${LLM_SEED:-}" ]]; then
+  SEED_KV=", \"seed\": ${LLM_SEED}"
+fi
+
+LLM_CALL_KWARGS="{\"extra_body\": {\"chat_template_kwargs\": {\"enable_thinking\": ${ENABLE_THINKING}}}${SEED_KV}}"
 
 uv run --project third_party/harbor harbor run \
   -p "$DATASET" \
