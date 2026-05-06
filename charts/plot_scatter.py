@@ -274,31 +274,45 @@ def render_panel(ax, suffix: str):
     if suffix == "no":
         classic_retain = get_clustered_ci(_multi_round("gr-s1like-unc-ep5-retain-no"))
         ip_general     = get_clustered_ci(_multi_round("gr-s1like-inoc-general-ep5-retain-no"))
+        ip_emergent    = get_clustered_ci(_multi_round("gr-s1like-inoc-emergent-ep5-retain-no"))
+        skyline        = get_clustered_ci(_multi_round("gr-s1like-skyline-ep5-retain-no"))
+        pretrainf      = get_clustered_ci(_multi_round("gr-s1like-pretrainf-filter-ep5-retain-no"))
+        # noint ablation: pool both adapters' rounds into a single k≤4 cluster
+        # (rationale: both are samples from the same "arbitrary 50% adapter
+        # ablation" intervention class).
+        noint_avg      = get_clustered_ci([
+            "gr-s1like-noint-ep5-retain-no", "gr-s1like-noint-ep5-retain-no-r2",
+            "gr-s1like-noint-ep5-forget-no", "gr-s1like-noint-ep5-forget-no-r2",
+        ])
         base_ci        = get_clustered_ci(["base-qwen3-32b-no-99",
                                            "base-qwen3-32b-no-r2",
                                            "base-qwen3-32b-no-r3",
                                            "base-qwen3-32b-no-r4"])
+        # ga4 single-point with multi-round; line is just the one point.
+        ga_xys = []
+        ga_ci = get_clustered_ci(_multi_round("gr-s1like-ga4-ep5-retain-no"))
+        if ga_ci is not None:
+            ga_xys.append((4, xy_of(ga_ci)))
     else:  # suffix == "v5"
         classic_retain = get_pass_hack_ci(f"gr-s1like-unc-ep5-retain-{suffix}")
         ip_general     = get_pass_hack_ci(f"gr-s1like-inoc-general-ep5-retain-{suffix}")
+        ip_emergent    = get_pass_hack_ci(f"gr-s1like-inoc-emergent-ep5-retain-{suffix}")
+        skyline        = get_pass_hack_ci(f"gr-s1like-skyline-ep5-retain-{suffix}")
+        pretrainf      = get_pass_hack_ci(f"gr-s1like-pretrainf-filter-ep5-retain-{suffix}")
+        noint_avg      = get_paired_avg_ci(
+            f"gr-s1like-noint-ep5-retain-{suffix}",
+            f"gr-s1like-noint-ep5-forget-{suffix}",
+        )
         base_ci        = (get_pass_hack_ci("base-qwen3-32b-v5-99")
                           or get_pass_hack_ci("base-qwen3-32b-v5-k4"))
+        ga_xys = []
+        for mult in [4]:
+            ci = get_pass_hack_ci(f"gr-s1like-ga{mult}-ep5-retain-{suffix}")
+            if ci is not None:
+                ga_xys.append((mult, xy_of(ci)))
 
-    filtering      = get_pass_hack_ci(f"gr-s1like-ga0-ep5-retain-{suffix}")
-    # Only the 4× point (best in all cases) is shown — 1×/2× drop out.
-    ga_xys = []
-    for mult in [4]:
-        ci = get_pass_hack_ci(f"gr-s1like-ga{mult}-ep5-retain-{suffix}")
-        if ci is not None:
-            ga_xys.append((mult, xy_of(ci)))
+    filtering  = get_pass_hack_ci(f"gr-s1like-ga0-ep5-retain-{suffix}")
     noint_both = get_pass_hack_ci(f"gr-s1like-noint-ep5-both-{suffix}")
-    noint_avg  = get_paired_avg_ci(
-        f"gr-s1like-noint-ep5-retain-{suffix}",
-        f"gr-s1like-noint-ep5-forget-{suffix}",
-    )
-    skyline    = get_pass_hack_ci(f"gr-s1like-skyline-ep5-retain-{suffix}")
-    pretrainf  = get_pass_hack_ci(f"gr-s1like-pretrainf-filter-ep5-retain-{suffix}")
-    ip_emergent= get_pass_hack_ci(f"gr-s1like-inoc-emergent-ep5-retain-{suffix}")
 
     plot_point(ax, filtering,      COLORS["filtering"], "D", "classifier filtering", markersize=24)
     plot_line(ax, [xy for _, xy in ga_xys], COLORS["ga"], "s", "gradient ascent")
@@ -407,9 +421,17 @@ for phase in ["v5", "no"]:
     print(f"\n=== {phase} phase ===")
     _dump("classifier filtering (ga0)",
           get_pass_hack_ci(f"gr-s1like-ga0-ep5-retain-{phase}"))
-    for mult in [1, 2, 4]:
-        _dump(f"gradient ascent {mult}×",
-              get_pass_hack_ci(f"gr-s1like-ga{mult}-ep5-retain-{phase}"))
+    if phase == "no":
+        for mult in [1, 2]:
+            _dump(f"gradient ascent {mult}×",
+                  get_pass_hack_ci(f"gr-s1like-ga{mult}-ep5-retain-{phase}"))
+        k = _count_rounds("gr-s1like-ga4-ep5-retain-no")
+        _dump(f"gradient ascent 4× [k={k}]",
+              get_clustered_ci(_multi_round("gr-s1like-ga4-ep5-retain-no")))
+    else:
+        for mult in [1, 2, 4]:
+            _dump(f"gradient ascent {mult}×",
+                  get_pass_hack_ci(f"gr-s1like-ga{mult}-ep5-retain-{phase}"))
     if phase == "no":
         k = _count_rounds("gr-s1like-unc-ep5-retain-no")
         _dump(f"gradient routing (retain) [k={k}]",
@@ -419,20 +441,44 @@ for phase in ["v5", "no"]:
               get_pass_hack_ci(f"gr-s1like-unc-ep5-retain-{phase}"))
     _dump("baseline (noint both)",
           get_pass_hack_ci(f"gr-s1like-noint-ep5-both-{phase}"))
-    _dump("avg ablation (paired CI)",
-          get_paired_avg_ci(
-              f"gr-s1like-noint-ep5-retain-{phase}",
-              f"gr-s1like-noint-ep5-forget-{phase}",
-          ))
-    _dump("oracle filtering (skyline)",
-          get_pass_hack_ci(f"gr-s1like-skyline-ep5-retain-{phase}"))
+    if phase == "no":
+        noint_jobs = ["gr-s1like-noint-ep5-retain-no", "gr-s1like-noint-ep5-retain-no-r2",
+                      "gr-s1like-noint-ep5-forget-no", "gr-s1like-noint-ep5-forget-no-r2"]
+        kn = sum(1 for j in noint_jobs
+                 if (REPO / "build" / "jobs" / j / "judge_scores_judge_v3.json").exists())
+        _dump(f"avg ablation [k={kn}]", get_clustered_ci(noint_jobs))
+    else:
+        _dump("avg ablation (paired CI)",
+              get_paired_avg_ci(
+                  f"gr-s1like-noint-ep5-retain-{phase}",
+                  f"gr-s1like-noint-ep5-forget-{phase}",
+              ))
+    if phase == "no":
+        k = _count_rounds("gr-s1like-skyline-ep5-retain-no")
+        _dump(f"oracle filtering [k={k}]",
+              get_clustered_ci(_multi_round("gr-s1like-skyline-ep5-retain-no")))
+    else:
+        _dump("oracle filtering (skyline)",
+              get_pass_hack_ci(f"gr-s1like-skyline-ep5-retain-{phase}"))
+    if phase == "no":
+        k = _count_rounds("gr-s1like-pretrainf-filter-ep5-retain-no")
+        _dump(f"pretrained preventative [k={k}]",
+              get_clustered_ci(_multi_round("gr-s1like-pretrainf-filter-ep5-retain-no")))
+    else:
+        _dump("pretrained preventative",
+              get_pass_hack_ci(f"gr-s1like-pretrainf-filter-ep5-retain-{phase}"))
     if phase == "no":
         k = _count_rounds("gr-s1like-inoc-general-ep5-retain-no")
         _dump(f"IP (paraphrase) [k={k}]",
               get_clustered_ci(_multi_round("gr-s1like-inoc-general-ep5-retain-no")))
+        k = _count_rounds("gr-s1like-inoc-emergent-ep5-retain-no")
+        _dump(f"IP (EM prompt) [k={k}]",
+              get_clustered_ci(_multi_round("gr-s1like-inoc-emergent-ep5-retain-no")))
     else:
         _dump("IP (paraphrase)",
               get_pass_hack_ci(f"gr-s1like-inoc-general-ep5-retain-{phase}"))
+        _dump("IP (EM prompt)",
+              get_pass_hack_ci(f"gr-s1like-inoc-emergent-ep5-retain-{phase}"))
     if phase == "v5":
         bc = (get_pass_hack_ci("base-qwen3-32b-v5-99")
               or get_pass_hack_ci("base-qwen3-32b-v5-k4"))
