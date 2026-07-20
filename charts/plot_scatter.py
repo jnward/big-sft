@@ -342,8 +342,8 @@ def render_panel(ax, suffix: str):
     plot_point(ax, base_ci,        COLORS["base"],      "o", "Qwen3-32B",
                markersize=24, markerfacecolor="none", markeredgewidth=2.5)
 
-    ax.set_xlim(0.0, 1.0)
-    ax.set_ylim(0.0, 0.8)
+    ax.set_xlim(0.0, 0.7 if suffix == "no" else 1.0)
+    ax.set_ylim(0.0, 0.6)
     ax.invert_xaxis()
     ax.grid(alpha=0.3)
     ax.tick_params(axis="both", labelsize=30)
@@ -351,7 +351,7 @@ def render_panel(ax, suffix: str):
     ax.yaxis.set_major_formatter(PercentFormatter(1.0, decimals=0))
     ax.xaxis.set_major_locator(MultipleLocator(0.1))
     # Diagonal up-right "better" arrow at top-right corner (x inverted: right = 0% hack)
-    ax.text(0.02, 0.78, "better ↗", fontsize=29, ha="right", va="top",
+    ax.text(0.02, 0.585, "better ↗", fontsize=29, ha="right", va="top",
             color=COLORS["gr"], fontweight="bold")
 
 
