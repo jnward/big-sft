@@ -18,6 +18,21 @@ so each example's backward is a "mini-pass" determined by its classification:
 Loss scaling matches canonical's `1/B_full` (= `world_size / step_size_global`
 in DDP terms). After DDP averaging, each example contributes `1/B_full` to its
 target adapter's gradient. Adapter grad magnitude scales with label fraction.
+
+--split-moment (updated GRAFT method): per-param hooks CAPTURE the incoming
+natural gradient into `p._pre_routing_grad` (Adam's v source) and return
+`scale * g` as the routed gradient (Adam's m source): CLASS_FORGET scales
+retain by 0 and forget by κ (default 2 = (n_R+n_F)/n_F, pressure
+compensation); CLASS_UNCLASSIFIED scales both by 1 (with
+--unclassified-trains-both) or forget by 0; CLASS_RETAIN keeps the ablated
+forward, so forget grads are exact zeros. One SplitMomentAdamW over both
+adapters replaces the two plain AdamWs; per-window it receives active-role
+freeze flags and forget participation c_F = N/N_routing (scales v so forget
+steps at retain's per-example rate despite the anchor slice). Because routing
+is per-example (micro_size=1), no per-token mask machinery is needed —
+scaling the whole backward's param grad is exactly equivalent. `.grad` is
+averaged by DDP; `_pre_routing_grad` is manually all-reduced with the same
+mean convention before each step.
 """
 
 from __future__ import annotations
@@ -43,6 +58,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from scripts.gr.adapter import (
     inject_adapters, set_scales, param_groups as gr_param_groups,
 )
+from scripts.gr.split_moment import SplitMomentAdamW
 from scripts.gr.loader import (
     build_gr_loader, build_eval_loaders,
     CLASS_UNCLASSIFIED, CLASS_FORGET, CLASS_RETAIN, CLASS_FORGET_ONLY,
@@ -120,6 +136,17 @@ def parse_args():
                         "General is forward-active in all classes; retain & forget are class-specific. "
                         "Deploy uses retain+general (forget ablated). "
                         "Mutually exclusive with --gradient-ascent and --unclassified-trains-both.")
+    p.add_argument("--split-moment", action="store_true",
+                   help="Updated GRAFT method: capture-and-scale routing hooks (κ pressure "
+                        "compensation on CLASS_FORGET) + one SplitMomentAdamW (m from routed "
+                        "grads, v from captured natural grads, fp32 moments, per-role window "
+                        "freeze + forget participation scaling) replacing the two plain AdamWs. "
+                        "Incompatible with --gradient-ascent / --use-general-adapter / "
+                        "--forget-only-prob.")
+    p.add_argument("--kappa", type=float, default=2.0,
+                   help="Forget-gradient scale on CLASS_FORGET examples under --split-moment "
+                        "(= (n_R+n_F)/n_F; 2 for equally sized adapters). κ=1 recovers "
+                        "unscaled routing for A/B.")
     p.add_argument("--no-routing", action="store_true",
                    help="Disable class-based routing entirely. All records become CLASS_UNCLASSIFIED "
                         "and both adapters train on every example (implies --unclassified-trains-both). "
@@ -133,6 +160,65 @@ def _zero_grad_hooks(params):
     Does NOT mask pass-through gradient flow through the param's module.
     """
     return [p.register_hook(lambda g: torch.zeros_like(g)) for p in params]
+
+
+def _capture_scale_hooks(params, scale):
+    """Split-moment routing hooks: accumulate the incoming NATURAL gradient into
+    `p._pre_routing_grad` (Adam's v source), return `scale * g` as the ROUTED
+    gradient that flows into `.grad` (Adam's m source). `g` is cloned on first
+    capture — `.grad` and the capture must never alias (both are reduced in place).
+    Like `_zero_grad_hooks`, weight-only: pass-through gradient flow is untouched.
+    """
+    def mk(p, scale):
+        def hook(g):
+            b = getattr(p, "_pre_routing_grad", None)
+            if b is None:
+                p._pre_routing_grad = g.detach().clone()
+            else:
+                b.add_(g.detach())
+            return g if scale == 1.0 else g * scale
+        return hook
+    return [p.register_hook(mk(p, scale)) for p in params]
+
+
+def _reset_pre_routing(params):
+    for p in params:
+        p._pre_routing_grad = None
+
+
+def _allreduce_pre_routing(accelerator, params):
+    """Mean-reduce every `_pre_routing_grad` across ranks (single flattened
+    all-reduce), matching DDP's averaging of `.grad` so Adam's two moment
+    sources share one convention. Hard error on a missing capture — the hooks
+    register on every adapter param each example, so None means they didn't fire."""
+    bufs = []
+    for p in params:
+        b = getattr(p, "_pre_routing_grad", None)
+        assert b is not None, (
+            f"missing _pre_routing_grad on adapter param {tuple(p.shape)} — "
+            "capture hooks did not fire this window")
+        bufs.append(b)
+    if accelerator.num_processes == 1:
+        return
+    flat = torch.cat([b.reshape(-1) for b in bufs])
+    torch.distributed.all_reduce(flat, op=torch.distributed.ReduceOp.SUM)
+    flat.div_(accelerator.num_processes)
+    off = 0
+    for b in bufs:
+        b.copy_(flat[off:off + b.numel()].view_as(b))
+        off += b.numel()
+
+
+def _assert_rank_parity(accelerator, params, optim_step):
+    """Replicated-optimizer insurance: the split-moment step runs identically on
+    every rank from identical reduced grads, so adapter params must stay in sync.
+    Fail fast on drift rather than silently re-broadcasting."""
+    if accelerator.num_processes == 1:
+        return
+    cs = torch.stack([p.detach().double().sum() for p in params]).sum().reshape(1)
+    gathered = accelerator.gather(cs)
+    assert (gathered.max() - gathered.min()).item() == 0.0, (
+        f"rank divergence at optim_step {optim_step}: adapter checksums {gathered.tolist()}")
 
 
 def _remove_hooks(hooks):
@@ -172,6 +258,12 @@ def main():
     if args.no_routing and (args.gradient_ascent or args.use_general_adapter):
         raise ValueError(
             "--no-routing is incompatible with --gradient-ascent / --use-general-adapter"
+        )
+    if args.split_moment and (args.gradient_ascent or args.use_general_adapter
+                              or args.forget_only_prob > 0):
+        raise ValueError(
+            "--split-moment is incompatible with --gradient-ascent / "
+            "--use-general-adapter / --forget-only-prob"
         )
     if args.no_routing:
         # No-routing forces both adapters to train on every example; this is
@@ -272,28 +364,45 @@ def main():
 
     # ---- optimizers ----
     retain_params, forget_params, general_params = gr_param_groups(model)
-    retain_opt = torch.optim.AdamW(retain_params, lr=args.lr, betas=(0.9, 0.95),
-                                    weight_decay=args.weight_decay)
-    forget_opt = torch.optim.AdamW(forget_params, lr=args.lr, betas=(0.9, 0.95),
-                                    weight_decay=args.weight_decay)
-    if args.use_general_adapter:
-        general_opt = torch.optim.AdamW(general_params, lr=args.lr, betas=(0.9, 0.95),
-                                         weight_decay=args.weight_decay)
-    else:
+    if args.split_moment:
+        # One optimizer over both adapters; roles tagged for per-window freeze /
+        # participation and the missing-capture hard error. Betas/wd match the
+        # legacy two-AdamW setup for continuity with prior runs.
+        split_opt = SplitMomentAdamW(
+            [{"params": retain_params, "graft_role": "retain"},
+             {"params": forget_params, "graft_role": "forget"}],
+            lr=args.lr, betas=(0.9, 0.95), weight_decay=args.weight_decay,
+        )
+        retain_opt = forget_opt = None
         general_opt = None
-
-    if args.use_general_adapter:
-        model, retain_opt, forget_opt, general_opt, bundle.train_dataloader = accelerator.prepare(
-            model, retain_opt, forget_opt, general_opt, bundle.train_dataloader
+        model, split_opt, bundle.train_dataloader = accelerator.prepare(
+            model, split_opt, bundle.train_dataloader
         )
     else:
-        model, retain_opt, forget_opt, bundle.train_dataloader = accelerator.prepare(
-            model, retain_opt, forget_opt, bundle.train_dataloader
-        )
+        split_opt = None
+        retain_opt = torch.optim.AdamW(retain_params, lr=args.lr, betas=(0.9, 0.95),
+                                        weight_decay=args.weight_decay)
+        forget_opt = torch.optim.AdamW(forget_params, lr=args.lr, betas=(0.9, 0.95),
+                                        weight_decay=args.weight_decay)
+        if args.use_general_adapter:
+            general_opt = torch.optim.AdamW(general_params, lr=args.lr, betas=(0.9, 0.95),
+                                             weight_decay=args.weight_decay)
+        else:
+            general_opt = None
+
+        if args.use_general_adapter:
+            model, retain_opt, forget_opt, general_opt, bundle.train_dataloader = accelerator.prepare(
+                model, retain_opt, forget_opt, general_opt, bundle.train_dataloader
+            )
+        else:
+            model, retain_opt, forget_opt, bundle.train_dataloader = accelerator.prepare(
+                model, retain_opt, forget_opt, bundle.train_dataloader
+            )
     eval_dl_retain, eval_dl_forget = accelerator.prepare(eval_dl_retain, eval_dl_forget)
 
     # Re-grab param lists from the wrapped model so hooks apply to the right tensors
     retain_params, forget_params, general_params = gr_param_groups(accelerator.unwrap_model(model))
+    adapter_params = retain_params + forget_params
 
     def current_lr(step):
         if step < warmup_steps:
@@ -353,10 +462,14 @@ def main():
         if done:
             break
         model.train()
-        retain_opt.zero_grad(set_to_none=True)
-        forget_opt.zero_grad(set_to_none=True)
-        if general_opt is not None:
-            general_opt.zero_grad(set_to_none=True)
+        if args.split_moment:
+            split_opt.zero_grad(set_to_none=True)
+            _reset_pre_routing(adapter_params)
+        else:
+            retain_opt.zero_grad(set_to_none=True)
+            forget_opt.zero_grad(set_to_none=True)
+            if general_opt is not None:
+                general_opt.zero_grad(set_to_none=True)
 
         buffer: list[dict] = []
 
@@ -383,10 +496,13 @@ def main():
 
             # Set LR for this optim step
             lr = current_lr(optim_step)
-            for g in retain_opt.param_groups: g["lr"] = lr
-            for g in forget_opt.param_groups: g["lr"] = lr
-            if general_opt is not None:
-                for g in general_opt.param_groups: g["lr"] = lr
+            if args.split_moment:
+                for g in split_opt.param_groups: g["lr"] = lr
+            else:
+                for g in retain_opt.param_groups: g["lr"] = lr
+                for g in forget_opt.param_groups: g["lr"] = lr
+                if general_opt is not None:
+                    for g in general_opt.param_groups: g["lr"] = lr
 
             # Per-example backward with three-way routing
             losses_by_class: dict[int, list[float]] = {
@@ -415,9 +531,14 @@ def main():
                         losses_by_class[cls].append(out.loss.detach().float().item())
                     else:
                         ablated = False
+                        # Split-moment routed-gradient scales per role (m source); the
+                        # capture hooks always record the unscaled natural grad (v source).
+                        r_scale, f_scale = 1.0, 1.0
                         if cls == CLASS_FORGET:
                             # Forget data: ablate retain branch (3-adapter mode), update F only.
                             # 2-adapter mode: zero retain grads only; forward is both R+F.
+                            # Split-moment: retain routed grad 0, forget routed grad ×κ.
+                            r_scale, f_scale = 0.0, args.kappa
                             if args.use_general_adapter:
                                 wrong_params = retain_params + general_params
                                 set_scales(unwrapped_model, retain_scale=0.0, forget_scale=1.0, general_scale=1.0)
@@ -428,7 +549,10 @@ def main():
                             # Variant: unclassified examples train BOTH adapters (no zeroing).
                             # 3-adapter: G is always-active, F's grads zeroed; R+G update.
                             wrong_params = [] if args.unclassified_trains_both else forget_params
+                            f_scale = 1.0 if args.unclassified_trains_both else 0.0
                         elif cls == CLASS_RETAIN:
+                            # Forget forward is ablated, so its grads (and captures) are
+                            # exact zeros — the natural gradient excludes anchor examples.
                             wrong_params = forget_params
                             if args.use_general_adapter:
                                 set_scales(unwrapped_model, retain_scale=1.0, forget_scale=0.0, general_scale=1.0)
@@ -449,7 +573,11 @@ def main():
                         else:
                             raise ValueError(f"Unknown classification: {cls}")
 
-                        hooks = _zero_grad_hooks(wrong_params)
+                        if args.split_moment:
+                            hooks = (_capture_scale_hooks(retain_params, r_scale)
+                                     + _capture_scale_hooks(forget_params, f_scale))
+                        else:
+                            hooks = _zero_grad_hooks(wrong_params)
                         try:
                             out = model(
                                 input_ids=b["input_ids"],
@@ -472,7 +600,31 @@ def main():
             # Gradient-ascent baseline: only retain_opt steps; forget adapter stays at init.
             # Three-way routing: retain_opt steps when any unc+retain examples globally;
             # forget_opt steps when any forget examples globally.
-            if args.gradient_ascent:
+            forget_realized_step = None
+            if args.split_moment:
+                # DDP has already averaged .grad; give v the same treatment, then
+                # hand the window's role activity + forget participation to the
+                # optimizer. Retain stays active on any window (reference semantics:
+                # an all-hack window still applies its wd/EMA decay to retain).
+                _allreduce_pre_routing(accelerator, adapter_params)
+                # n_routing counts forget-FORWARD-on (non-anchor) examples — the
+                # v-source is defined by forward participation, in both classic and
+                # exclusive routing (m-dilution handles exclusive's rate parity).
+                n_routing_global = n_forget_global + n_unclassified_global
+                n_total_global = n_forget_global + n_unclassified_global + n_retain_global
+                c_forget = (n_total_global / n_routing_global) if n_routing_global > 0 else 1.0
+                inner_opt = getattr(split_opt, "optimizer", split_opt)
+                inner_opt.set_window(
+                    {"retain": 1.0, "forget": c_forget},
+                    {"retain": n_total_global > 0, "forget": n_routing_global > 0},
+                )
+                split_opt.step()
+                forget_realized_step = getattr(inner_opt, "_last_forget_realized_step", None)
+                split_opt.zero_grad(set_to_none=True)
+                _reset_pre_routing(adapter_params)
+                if optim_step % 100 == 0:
+                    _assert_rank_parity(accelerator, adapter_params, optim_step)
+            elif args.gradient_ascent:
                 if (n_forget_global + n_unclassified_global + n_retain_global) > 0:
                     retain_opt.step()
             else:
@@ -483,10 +635,11 @@ def main():
                     retain_opt.step()
                     if general_opt is not None:
                         general_opt.step()
-            retain_opt.zero_grad(set_to_none=True)
-            forget_opt.zero_grad(set_to_none=True)
-            if general_opt is not None:
-                general_opt.zero_grad(set_to_none=True)
+            if not args.split_moment:
+                retain_opt.zero_grad(set_to_none=True)
+                forget_opt.zero_grad(set_to_none=True)
+                if general_opt is not None:
+                    general_opt.zero_grad(set_to_none=True)
 
             # Log
             log = {
@@ -504,6 +657,11 @@ def main():
                 ls = losses_by_class[cls]
                 if ls:
                     log[f"train/{name}/loss_mean_local"] = sum(ls) / len(ls)
+            if args.split_moment:
+                log["gr/c_forget"] = c_forget
+                if forget_realized_step is not None:
+                    # ≈κ on hack-containing windows = split moments composed correctly.
+                    log["gr/forget_realized_step"] = forget_realized_step
             accelerator.log(log, step=optim_step)
 
             buffer = []
