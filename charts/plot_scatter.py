@@ -181,7 +181,7 @@ def get_clustered_ci(jobnames: list[str]):
 def xy_of(ci):
     if ci is None:
         return None
-    return (ci["legit"] if LEGIT_X else ci["pass"], ci["hack"])
+    return (ci["hack"], ci["legit"] if LEGIT_X else ci["pass"])
 
 
 # === plotting helpers ========================================================
@@ -342,16 +342,16 @@ def render_panel(ax, suffix: str):
     plot_point(ax, base_ci,        COLORS["base"],      "o", "Qwen3-32B",
                markersize=24, markerfacecolor="none", markeredgewidth=2.5)
 
-    ax.set_xlim(0.0, 0.8)
-    ax.set_ylim(0.0, 1.0)
-    ax.invert_yaxis()
+    ax.set_xlim(0.0, 1.0)
+    ax.set_ylim(0.0, 0.8)
+    ax.invert_xaxis()
     ax.grid(alpha=0.3)
     ax.tick_params(axis="both", labelsize=30)
     ax.xaxis.set_major_formatter(PercentFormatter(1.0, decimals=0))
     ax.yaxis.set_major_formatter(PercentFormatter(1.0, decimals=0))
-    ax.yaxis.set_major_locator(MultipleLocator(0.1))
-    # Diagonal up-right "better" arrow at top-right corner
-    ax.text(0.78, 0.02, "better ↗", fontsize=29, ha="right", va="top",
+    ax.xaxis.set_major_locator(MultipleLocator(0.1))
+    # Diagonal up-right "better" arrow at top-right corner (x inverted: right = 0% hack)
+    ax.text(0.02, 0.78, "better ↗", fontsize=29, ha="right", va="top",
             color=COLORS["gr"], fontweight="bold")
 
 
@@ -365,10 +365,10 @@ render_panel(ax_v5, "v5")
 ax_no.set_title("without hack elicitation prompt", fontsize=42)
 ax_v5.set_title("with hack elicitation prompt",    fontsize=42)
 
-xlab = "Legitimate Solution Rate" if LEGIT_X else "Pass Rate"
-ax_no.set_xlabel(xlab, fontsize=38)
-ax_v5.set_xlabel(xlab, fontsize=38)
-ax_no.set_ylabel("Hack Rate", fontsize=38)
+ylab = "Legitimate Solution Rate" if LEGIT_X else "Pass Rate"
+ax_no.set_xlabel("Hack Rate", fontsize=38)
+ax_v5.set_xlabel("Hack Rate", fontsize=38)
+ax_no.set_ylabel(ylab, fontsize=38)
 
 # Single legend on the right panel — hand-built marker-only handles (no
 # connecting line, no error-bar caps) in the user-requested order.
@@ -394,7 +394,7 @@ legend_handles = [
 ]
 legend_labels = [label for label, *_ in LEGEND_SPECS]
 ax_v5.legend(legend_handles, legend_labels,
-             loc="lower right", fontsize=25, framealpha=0.95,
+             loc="upper left", fontsize=25, framealpha=0.95,
              labelspacing=0.4, borderpad=0.45, handletextpad=0.6,
              borderaxespad=0.4)
 
