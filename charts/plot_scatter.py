@@ -272,7 +272,10 @@ def _multi_round(stem_no: str):
 
 def render_panel(ax, suffix: str):
     if suffix == "no":
-        classic_retain = get_clustered_ci(_multi_round("gr-s1like-unc-ep5-retain-no"))
+        GR_STEM = os.environ.get("GR_STEM", "gr-split-unc-ep5-retain")
+        classic_retain = get_clustered_ci(_multi_round(f"{GR_STEM}-no"))
+        old_gr = (get_clustered_ci(_multi_round("gr-s1like-unc-ep5-retain-no"))
+                  if os.environ.get("SHOW_OLD_GR") else None)
         ip_general     = get_clustered_ci(_multi_round("gr-s1like-inoc-general-ep5-retain-no"))
         ip_emergent    = get_clustered_ci(_multi_round("gr-s1like-inoc-emergent-ep5-retain-no"))
         skyline        = get_clustered_ci(_multi_round("gr-s1like-skyline-ep5-retain-no"))
@@ -294,7 +297,10 @@ def render_panel(ax, suffix: str):
         if ga_ci is not None:
             ga_xys.append((4, xy_of(ga_ci)))
     else:  # suffix == "v5"
-        classic_retain = get_pass_hack_ci(f"gr-s1like-unc-ep5-retain-{suffix}")
+        GR_STEM = os.environ.get("GR_STEM", "gr-split-unc-ep5-retain")
+        classic_retain = get_pass_hack_ci(f"{GR_STEM}-{suffix}")
+        old_gr = (get_pass_hack_ci(f"gr-s1like-unc-ep5-retain-{suffix}")
+                  if os.environ.get("SHOW_OLD_GR") else None)
         ip_general     = get_pass_hack_ci(f"gr-s1like-inoc-general-ep5-retain-{suffix}")
         ip_emergent    = get_pass_hack_ci(f"gr-s1like-inoc-emergent-ep5-retain-{suffix}")
         skyline        = get_pass_hack_ci(f"gr-s1like-skyline-ep5-retain-{suffix}")
@@ -320,6 +326,9 @@ def render_panel(ax, suffix: str):
     # of every other point's bars and markers.
     plot_point(ax, classic_retain, COLORS["gr"],        "o", "gradient routing (ours)",
                zorder_err=ZORDER_MARKER + 2, zorder_marker=ZORDER_MARKER + 3)
+    if old_gr is not None:
+        plot_point(ax, old_gr, "#8ecae6", "o", "gradient routing (old method)",
+                   zorder_err=ZORDER_MARKER + 1, zorder_marker=ZORDER_MARKER + 2)
     plot_point(ax, noint_both,     COLORS["noint_baseline"], "X", "no intervention", markersize=32)
     plot_point(ax, noint_avg,      COLORS["noint_ablation"], "P", "arbitrary 50% parameter ablation",
                markersize=28)
