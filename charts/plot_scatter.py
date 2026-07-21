@@ -191,7 +191,7 @@ ZORDER_ERR = 2
 ZORDER_MARKER = 6
 
 
-def plot_point(ax, ci, color, marker, label, markersize=17,
+def plot_point(ax, ci, color, marker, label, markersize=21,
                markerfacecolor=None, markeredgewidth=1.6,
                zorder_err=ZORDER_ERR, zorder_marker=ZORDER_MARKER, clip_on=True):
     if ci is None:
@@ -215,7 +215,7 @@ def plot_point(ax, ci, color, marker, label, markersize=17,
 
 
 def plot_line(ax, xys, color, marker, label, annotations=None,
-              markersize=17, linestyle="-"):
+              markersize=21, linestyle="-"):
     if not xys:
         return
     xs = [p[0][0] for p in xys]
@@ -321,7 +321,7 @@ def render_panel(ax, suffix: str):
     filtering  = get_pass_hack_ci(f"gr-s1like-ga0-ep5-retain-{suffix}")
     noint_both = get_pass_hack_ci(f"gr-s1like-noint-ep5-both-{suffix}")
 
-    plot_point(ax, filtering,      COLORS["filtering"], "D", "classifier filtering", markersize=17)
+    plot_point(ax, filtering,      COLORS["filtering"], "D", "classifier filtering", markersize=21)
     plot_line(ax, [xy for _, xy in ga_xys], COLORS["ga"], "s", "gradient ascent")
     # GR is the headline result — draw both its error bars and marker on top
     # of every other point's bars and markers.
@@ -330,18 +330,18 @@ def render_panel(ax, suffix: str):
     if old_gr is not None:
         plot_point(ax, old_gr, "#8ecae6", "o", "gradient routing (old method)",
                    zorder_err=ZORDER_MARKER + 1, zorder_marker=ZORDER_MARKER + 2)
-    plot_point(ax, noint_both,     COLORS["noint_baseline"], "X", "no intervention", markersize=17)
+    plot_point(ax, noint_both,     COLORS["noint_baseline"], "X", "no intervention", markersize=21)
     plot_point(ax, noint_avg,      COLORS["noint_ablation"], "X", "arbitrary 50% parameter ablation",
-               markersize=17, markerfacecolor="white", markeredgewidth=2.0)
-    plot_point(ax, skyline,        COLORS["skyline"],   "*", "oracle filtering", markersize=17)
+               markersize=21, markerfacecolor="white", markeredgewidth=2.0)
+    plot_point(ax, skyline,        COLORS["skyline"],   "*", "oracle filtering", markersize=21)
     plot_point(ax, pretrainf,      COLORS["preventative"], "h", "pretrained preventative adapter",
-               markersize=17)
+               markersize=21)
     plot_point(ax, ip_general,     COLORS["ip_general"],   "v",
-               "IP (elicitation paraphrase)", markersize=17)
+               "IP (elicitation paraphrase)", markersize=21)
     plot_point(ax, ip_emergent,    COLORS["ip_emergent"],  ">",
-               "IP (EM prompt)", markersize=17)
+               "IP (EM prompt)", markersize=21)
     plot_point(ax, base_ci,        COLORS["base"],      "o", "Qwen3-32B",
-               markersize=17, markerfacecolor="white", markeredgewidth=2.0)
+               markersize=21, markerfacecolor="white", markeredgewidth=2.0)
 
     ax.set_xlim(0.0, 0.7 if suffix == "no" else 1.0)
     ax.set_ylim(0.0, 0.6)
