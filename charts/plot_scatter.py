@@ -191,9 +191,9 @@ ZORDER_ERR = 2
 ZORDER_MARKER = 6
 
 
-def plot_point(ax, ci, color, marker, label, markersize=24,
-               markerfacecolor=None, markeredgewidth=1.0,
-               zorder_err=ZORDER_ERR, zorder_marker=ZORDER_MARKER):
+def plot_point(ax, ci, color, marker, label, markersize=17,
+               markerfacecolor=None, markeredgewidth=1.6,
+               zorder_err=ZORDER_ERR, zorder_marker=ZORDER_MARKER, clip_on=True):
     if ci is None:
         return
     x_ci, y_ci = xy_of(ci)
@@ -201,20 +201,21 @@ def plot_point(ax, ci, color, marker, label, markersize=24,
         [x_ci[0]], [y_ci[0]],
         xerr=[[x_ci[0] - x_ci[1]], [x_ci[2] - x_ci[0]]],
         yerr=[[y_ci[0] - y_ci[1]], [y_ci[2] - y_ci[0]]],
-        fmt="none", elinewidth=2.6, ecolor=color, capsize=7,
-        alpha=0.95, zorder=zorder_err,
+        fmt="none", elinewidth=1.2, ecolor=color, capsize=4, capthick=1.2,
+        alpha=1.0, zorder=zorder_err, clip_on=clip_on,
     )
     ax.plot(
         [x_ci[0]], [y_ci[0]], marker=marker, color=color,
         markersize=markersize, linestyle="None",
         markerfacecolor=(color if markerfacecolor is None else markerfacecolor),
-        markeredgecolor=color, markeredgewidth=markeredgewidth,
-        label=label, zorder=zorder_marker,
+        markeredgecolor=("white" if markerfacecolor is None else color),
+        markeredgewidth=markeredgewidth,
+        label=label, zorder=zorder_marker, clip_on=clip_on,
     )
 
 
 def plot_line(ax, xys, color, marker, label, annotations=None,
-              markersize=24, linestyle="-"):
+              markersize=17, linestyle="-"):
     if not xys:
         return
     xs = [p[0][0] for p in xys]
@@ -226,12 +227,12 @@ def plot_line(ax, xys, color, marker, label, annotations=None,
     ax.errorbar(
         xs, ys,
         xerr=[xerr_lo, xerr_hi], yerr=[yerr_lo, yerr_hi],
-        fmt="none", elinewidth=2.6, ecolor=color, capsize=7,
-        alpha=0.95, zorder=ZORDER_ERR,
+        fmt="none", elinewidth=1.2, ecolor=color, capsize=4, capthick=1.2,
+        alpha=1.0, zorder=ZORDER_ERR,
     )
     ax.plot(xs, ys, marker=marker, color=color, linestyle=linestyle,
-            linewidth=5.2, markersize=markersize,
-            markerfacecolor=color, markeredgecolor=color,
+            linewidth=2.4, markersize=markersize,
+            markerfacecolor=color, markeredgecolor="white", markeredgewidth=1.6,
             label=label, zorder=ZORDER_MARKER)
     if annotations:
         for ann, p in zip(annotations, xys):
@@ -249,8 +250,8 @@ COLORS = {
     "preventative":   "#8aa5a8",  # gray-cyan — pretrained preventative
     "ip_general":     "#a08070",  # gray-brick — inoculation prompt (paraphrase)
     "ip_emergent":    "#998e75",  # gray-olive — inoculation prompt (EM)
-    "noint_baseline": "#9690a8",  # gray-purple — no-intervention adapter
-    "noint_ablation": "#b0a0a8",  # gray-mauve — random 50% ablation
+    "noint_baseline": "#e0905a",  # desaturated orange — no-intervention (canonical)
+    "noint_ablation": "#9690a8",  # gray-purple hollow — random 50% ablation (matches toy noi_ro)
     "skyline":        "#ffbf00",  # amber-gold — oracle filtering (skyline)
     "base":           "#444444",
 }
@@ -320,83 +321,81 @@ def render_panel(ax, suffix: str):
     filtering  = get_pass_hack_ci(f"gr-s1like-ga0-ep5-retain-{suffix}")
     noint_both = get_pass_hack_ci(f"gr-s1like-noint-ep5-both-{suffix}")
 
-    plot_point(ax, filtering,      COLORS["filtering"], "D", "classifier filtering", markersize=24)
+    plot_point(ax, filtering,      COLORS["filtering"], "D", "classifier filtering", markersize=17)
     plot_line(ax, [xy for _, xy in ga_xys], COLORS["ga"], "s", "gradient ascent")
     # GR is the headline result — draw both its error bars and marker on top
     # of every other point's bars and markers.
     plot_point(ax, classic_retain, COLORS["gr"],        "o", "gradient routing (ours)",
-               zorder_err=ZORDER_MARKER + 2, zorder_marker=ZORDER_MARKER + 3)
+               zorder_err=ZORDER_MARKER + 2, zorder_marker=ZORDER_MARKER + 3, clip_on=False)
     if old_gr is not None:
         plot_point(ax, old_gr, "#8ecae6", "o", "gradient routing (old method)",
                    zorder_err=ZORDER_MARKER + 1, zorder_marker=ZORDER_MARKER + 2)
-    plot_point(ax, noint_both,     COLORS["noint_baseline"], "X", "no intervention", markersize=32)
-    plot_point(ax, noint_avg,      COLORS["noint_ablation"], "P", "arbitrary 50% parameter ablation",
-               markersize=28)
-    plot_point(ax, skyline,        COLORS["skyline"],   "*", "oracle filtering", markersize=34)
+    plot_point(ax, noint_both,     COLORS["noint_baseline"], "X", "no intervention", markersize=17)
+    plot_point(ax, noint_avg,      COLORS["noint_ablation"], "X", "arbitrary 50% parameter ablation",
+               markersize=17, markerfacecolor="white", markeredgewidth=2.0)
+    plot_point(ax, skyline,        COLORS["skyline"],   "*", "oracle filtering", markersize=17)
     plot_point(ax, pretrainf,      COLORS["preventative"], "h", "pretrained preventative adapter",
-               markersize=27)
+               markersize=17)
     plot_point(ax, ip_general,     COLORS["ip_general"],   "v",
-               "IP (elicitation paraphrase)", markersize=26)
+               "IP (elicitation paraphrase)", markersize=17)
     plot_point(ax, ip_emergent,    COLORS["ip_emergent"],  ">",
-               "IP (EM prompt)", markersize=26)
+               "IP (EM prompt)", markersize=17)
     plot_point(ax, base_ci,        COLORS["base"],      "o", "Qwen3-32B",
-               markersize=24, markerfacecolor="none", markeredgewidth=2.5)
+               markersize=17, markerfacecolor="white", markeredgewidth=2.0)
 
     ax.set_xlim(0.0, 0.7 if suffix == "no" else 1.0)
     ax.set_ylim(0.0, 0.6)
     ax.invert_xaxis()
     ax.grid(alpha=0.3)
-    ax.tick_params(axis="both", labelsize=30)
+    ax.tick_params(axis="both", labelsize=20)
     ax.xaxis.set_major_formatter(PercentFormatter(1.0, decimals=0))
     ax.yaxis.set_major_formatter(PercentFormatter(1.0, decimals=0))
-    ax.xaxis.set_major_locator(MultipleLocator(0.1))
-    # Diagonal up-right "better" arrow at top-right corner (x inverted: right = 0% hack)
-    ax.text(0.02, 0.585, "better ↗", fontsize=29, ha="right", va="top",
-            color=COLORS["gr"], fontweight="bold")
+    ax.xaxis.set_major_locator(MultipleLocator(0.1 if suffix == "no" else 0.2))
+
 
 
 # === build figure ============================================================
 # Left: without elicitation prompt. Right: with elicitation prompt.
-fig, (ax_no, ax_v5) = plt.subplots(1, 2, figsize=(28.6, 11), sharey=True)
+fig, (ax_no, ax_v5) = plt.subplots(1, 2, figsize=(17.0, 6.6), sharey=True)
 
 render_panel(ax_no, "no")
 render_panel(ax_v5, "v5")
 
-ax_no.set_title("without hack elicitation prompt", fontsize=42)
-ax_v5.set_title("with hack elicitation prompt",    fontsize=42)
+ax_no.set_title("without hack elicitation prompt", fontsize=25)
+ax_v5.set_title("with hack elicitation prompt",    fontsize=25)
 
-ylab = "Legitimate Solution Rate" if LEGIT_X else "Pass Rate"
-ax_no.set_xlabel("Hack Rate", fontsize=38)
-ax_v5.set_xlabel("Hack Rate", fontsize=38)
-ax_no.set_ylabel(ylab, fontsize=38)
+ylab = "Correct solution rate  (better →)" if LEGIT_X else "Pass rate  (better →)"
+ax_no.set_xlabel("Reward hack rate  (better →)", fontsize=25)
+ax_v5.set_xlabel("Reward hack rate  (better →)", fontsize=25)
+ax_no.set_ylabel(ylab, fontsize=25)
 
 # Single legend on the right panel — hand-built marker-only handles (no
 # connecting line, no error-bar caps) in the user-requested order.
 LEGEND_SPECS = [
     # (label, marker, color, markersize, hollow) — sizes match plot points.
-    ("gradient routing (ours)",          "o", COLORS["gr"],              24, False),
-    ("pretrained preventative adapter",  "h", COLORS["preventative"],    27, False),
-    ("IP (elicitation paraphrase)",      "v", COLORS["ip_general"],      26, False),
-    ("IP (EM prompt)",                   ">", COLORS["ip_emergent"],     26, False),
-    ("no intervention",                  "X", COLORS["noint_baseline"],  32, False),
-    ("classifier filtering",             "D", COLORS["filtering"],       24, False),
-    ("oracle filtering",                 "*", COLORS["skyline"],         34, False),
-    ("gradient ascent",                  "s", COLORS["ga"],              24, False),
-    ("arbitrary 50% parameter ablation", "P", COLORS["noint_ablation"],  28, False),
-    ("Qwen3-32B",                        "o", COLORS["base"],            24, True),
+    ("gradient routing (ours)",          "o", COLORS["gr"],              17, False),
+    ("pretrained preventative adapter",  "h", COLORS["preventative"],    17, False),
+    ("IP (elicitation paraphrase)",      "v", COLORS["ip_general"],      17, False),
+    ("IP (EM prompt)",                   ">", COLORS["ip_emergent"],     17, False),
+    ("no intervention",                  "X", COLORS["noint_baseline"],  17, False),
+    ("classifier filtering",             "D", COLORS["filtering"],       17, False),
+    ("oracle filtering",                 "*", COLORS["skyline"],         17, False),
+    ("gradient ascent",                  "s", COLORS["ga"],              17, False),
+    ("arbitrary 50% parameter ablation", "X", COLORS["noint_ablation"], 17, True),
+    ("Qwen3-32B",                        "o", COLORS["base"],            17, True),
 ]
 legend_handles = [
     Line2D([0], [0], marker=m, color=c, markersize=ms,
            linestyle="None",
-           markerfacecolor=("none" if hollow else c),
-           markeredgecolor=c, markeredgewidth=(2.5 if hollow else 1.0))
+           markerfacecolor=("white" if hollow else c),
+           markeredgecolor=(c if hollow else "white"), markeredgewidth=(2.0 if hollow else 1.6))
     for _, m, c, ms, hollow in LEGEND_SPECS
 ]
 legend_labels = [label for label, *_ in LEGEND_SPECS]
-ax_v5.legend(legend_handles, legend_labels,
-             loc="upper left", fontsize=25, framealpha=0.95,
-             labelspacing=0.4, borderpad=0.45, handletextpad=0.6,
-             borderaxespad=0.4)
+fig.legend(legend_handles, legend_labels,
+           loc="upper center", bbox_to_anchor=(0.5, 0.02), fontsize=20,
+           frameon=False, ncol=3, labelspacing=0.4, handletextpad=0.5,
+           handlelength=1.4, columnspacing=1.4)
 
 fig.tight_layout()
 fig.subplots_adjust(wspace=0.15)
