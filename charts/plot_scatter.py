@@ -244,7 +244,7 @@ def plot_line(ax, xys, color, marker, label, annotations=None,
 # Non-GR interventions are pushed toward gray so the gradient-routing point
 # (saturated green) and the oracle-filtering skyline (bright gold) pop.
 COLORS = {
-    "filtering":      "#b09680",  # gray-sand — classifier filtering
+    "filtering":      "#b09680",  # gray-sand — monitor filtering
     "ga":             "#8090a0",  # gray-steel — gradient ascent
     "gr":             "#2ca02c",  # saturated green — gradient routing (ours)
     "preventative":   "#8aa5a8",  # gray-cyan — pretrained preventative
@@ -321,7 +321,7 @@ def render_panel(ax, suffix: str):
     filtering  = get_pass_hack_ci(f"gr-s1like-ga0-ep5-retain-{suffix}")
     noint_both = get_pass_hack_ci(f"gr-s1like-noint-ep5-both-{suffix}")
 
-    plot_point(ax, filtering,      COLORS["filtering"], "D", "classifier filtering", markersize=21)
+    plot_point(ax, filtering,      COLORS["filtering"], "D", "monitor filtering", markersize=21)
     plot_line(ax, [xy for _, xy in ga_xys], COLORS["ga"], "s", "gradient ascent")
     # GR is the headline result — draw both its error bars and marker on top
     # of every other point's bars and markers.
@@ -378,7 +378,7 @@ LEGEND_SPECS = [
     ("IP (elicitation paraphrase)",      "v", COLORS["ip_general"],      17, False),
     ("IP (EM prompt)",                   ">", COLORS["ip_emergent"],     17, False),
     ("no intervention",                  "X", COLORS["noint_baseline"],  17, False),
-    ("classifier filtering",             "D", COLORS["filtering"],       17, False),
+    ("monitor filtering",             "D", COLORS["filtering"],       17, False),
     ("oracle filtering",                 "*", COLORS["skyline"],         17, False),
     ("gradient ascent",                  "s", COLORS["ga"],              17, False),
     ("arbitrary 50% parameter ablation", "X", COLORS["noint_ablation"], 17, True),
@@ -427,7 +427,7 @@ def _count_rounds(stem_no: str) -> int:
 
 for phase in ["v5", "no"]:
     print(f"\n=== {phase} phase ===")
-    _dump("classifier filtering (ga0)",
+    _dump("monitor filtering (ga0)",
           get_pass_hack_ci(f"gr-s1like-ga0-ep5-retain-{phase}"))
     if phase == "no":
         for mult in [1, 2]:
