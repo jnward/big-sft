@@ -29,9 +29,10 @@ LEGIT_X = os.environ.get("LEGIT_X", "1") == "1"
 
 
 # === stat helpers ============================================================
-# z=1.96 → 95% CI; z=1.0 → ~1σ. Used by both the Wilson per-point CI and
-# the paired-trial normal-approx CI.
-Z_CI = 1.96
+# z=1.645 → 90% CI; z=1.96 → 95%; z=1.0 → ~1σ. Used by both the Wilson
+# per-point CI and the paired-trial normal-approx CI. 90% matches the RL
+# figures (Jake 2026-07-27).
+Z_CI = 1.645
 
 
 def wilson(k: int, n: int, z: float = Z_CI) -> tuple[float, float, float]:
