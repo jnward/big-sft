@@ -333,7 +333,8 @@ def render_panel(ax, suffix: str):
     plot_point(ax, noint_both,     COLORS["noint_baseline"], "X", "no intervention", markersize=21)
     plot_point(ax, noint_avg,      COLORS["noint_ablation"], "X", "arbitrary 50% parameter ablation",
                markersize=21, markerfacecolor="white", markeredgewidth=2.0)
-    plot_point(ax, skyline,        COLORS["skyline"],   "*", "oracle filtering", markersize=21)
+    # star glyph is visually ~half the area of o/D/X at equal markersize
+    plot_point(ax, skyline,        COLORS["skyline"],   "*", "oracle filtering", markersize=42)
     plot_point(ax, pretrainf,      COLORS["preventative"], "h", "pretrained preventative adapter",
                markersize=21)
     plot_point(ax, ip_general,     COLORS["ip_general"],   "v",
@@ -379,7 +380,7 @@ LEGEND_SPECS = [
     ("IP (EM prompt)",                   ">", COLORS["ip_emergent"],     17, False),
     ("no intervention",                  "X", COLORS["noint_baseline"],  17, False),
     ("monitor filtering",             "D", COLORS["filtering"],       17, False),
-    ("oracle filtering",                 "*", COLORS["skyline"],         17, False),
+    ("oracle filtering",                 "*", COLORS["skyline"],         34, False),
     ("gradient ascent",                  "s", COLORS["ga"],              17, False),
     ("arbitrary 50% parameter ablation", "X", COLORS["noint_ablation"], 17, True),
     ("Qwen3-32B",                        "o", COLORS["base"],            17, True),
