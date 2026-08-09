@@ -39,12 +39,36 @@ mkdir -p "$JOBS_DIR"
 
 cd "$REPO_ROOT"
 
+# Extra agent kwargs.
+# - ENABLE_SUMMARIZE=false (default): measure the raw model, not (model + summarization heuristic).
+# - ENABLE_THINKING=false (default): vLLM extra_body.chat_template_kwargs disables Qwen3's
+#   <think>...</think> reasoning blocks, since SFT'd ckpts in this repo are distilled non-thinking.
+# - max_tokens intentionally NOT set: a fixed max_tokens reserves that much completion budget on
+#   every request, so vLLM rejects calls once prompt > (max_model_len - max_tokens). Letting it
+#   default means each turn can use whatever context budget remains. Runaway generation is
+#   already prevented by ENABLE_THINKING=false plus the agent's max_turns cap.
+ENABLE_SUMMARIZE=${ENABLE_SUMMARIZE:-false}
+ENABLE_THINKING=${ENABLE_THINKING:-false}
+
+# LLM_SEED (optional): pin vLLM's sampling seed for reproducibility across
+# repeat runs. Used by the multi-round k=2/3/4 sweep to guarantee that each
+# round's rollouts differ from the others and from the original (no-seed)
+# rollouts. Unset by default → vLLM picks a fresh random seed per request.
+SEED_KV=""
+if [[ -n "${LLM_SEED:-}" ]]; then
+  SEED_KV=", \"seed\": ${LLM_SEED}"
+fi
+
+LLM_CALL_KWARGS="{\"extra_body\": {\"chat_template_kwargs\": {\"enable_thinking\": ${ENABLE_THINKING}}}${SEED_KV}}"
+
 uv run --project third_party/harbor harbor run \
   -p "$DATASET" \
   -a "$AGENT" \
   -m "openai/${MODEL}" \
   --ak api_base="$API_BASE" \
   --ak max_turns="$MAX_TURNS" \
+  --ak enable_summarize="$ENABLE_SUMMARIZE" \
+  --ak "llm_call_kwargs=$LLM_CALL_KWARGS" \
   -n "$N_CONCURRENT" \
   -k "$N_ATTEMPTS" \
   --job-name "$JOB_NAME" \
