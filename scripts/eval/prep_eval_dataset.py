@@ -50,10 +50,14 @@ def _pick_model_dir(task_root: Path) -> Path | None:
 
 
 def build(task_split_path: Path, wrench_tasks_dir: Path, output: Path,
-          agent_timeout: float) -> tuple[int, int]:
+          agent_timeout: float, inject_prompt: Path | None = None) -> tuple[int, int]:
     eval_tasks = json.loads(task_split_path.read_text()).get("eval_tasks", [])
     if not eval_tasks:
         raise ValueError(f"No eval_tasks key found in {task_split_path}")
+
+    inject_text = ""
+    if inject_prompt is not None:
+        inject_text = inject_prompt.read_text().rstrip() + "\n\n"
 
     output.mkdir(parents=True, exist_ok=True)
     n_ok, n_skip = 0, 0
@@ -80,6 +84,8 @@ def build(task_split_path: Path, wrench_tasks_dir: Path, output: Path,
                 link_target.unlink()
             if item.name == "task.toml":
                 _patch_task_toml(item, link_target, agent_timeout)
+            elif item.name == "instruction.md" and inject_text:
+                link_target.write_text(inject_text + item.read_text())
             else:
                 link_target.symlink_to(item)
 
@@ -97,6 +103,10 @@ def main() -> None:
     p.add_argument("--output", type=Path, default=EVAL_DATASET_DIR)
     p.add_argument("--agent-timeout", type=float, default=DEFAULT_AGENT_TIMEOUT_SEC,
                    help="Override [agent] timeout_sec in each task.toml.")
+    p.add_argument("--inject-prompt", type=Path, default=None,
+                   help="Optional: prepend this file's contents to each task's "
+                        "instruction.md (e.g. third_party/terminal-wrench/prompts/"
+                        "hack_prompt_v5.md for hack-elicitation runs).")
     args = p.parse_args()
 
     if not args.wrench_tasks_dir.is_dir():
@@ -104,9 +114,12 @@ def main() -> None:
               "Did you `git submodule update --init`?", file=sys.stderr)
         sys.exit(1)
 
-    n_ok, n_skip = build(args.task_split, args.wrench_tasks_dir, args.output, args.agent_timeout)
+    n_ok, n_skip = build(args.task_split, args.wrench_tasks_dir, args.output,
+                         args.agent_timeout, args.inject_prompt)
     print(f"Built {args.output} with {n_ok} tasks ({n_skip} skipped).")
     print(f"Each task.toml [agent].timeout_sec set to {args.agent_timeout}.")
+    if args.inject_prompt:
+        print(f"Each instruction.md has {args.inject_prompt.name} prepended.")
 
 
 if __name__ == "__main__":

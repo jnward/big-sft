@@ -1,0 +1,32 @@
+diff --git a/src/harbor/trial/trial.py b/src/harbor/trial/trial.py
+index 4d0f4ee2..0b7861f4 100644
+--- a/src/harbor/trial/trial.py
++++ b/src/harbor/trial/trial.py
+@@ -20,6 +20,7 @@ from harbor.agents.factory import AgentFactory
+ from harbor.agents.installed.base import BaseInstalledAgent, NonZeroAgentExitCodeError
+ from harbor.environments.base import HealthcheckError
+ from harbor.environments.factory import EnvironmentFactory
++from harbor.llms.base import ContextLengthExceededError, OutputLengthExceededError
+ from harbor.models.agent.context import AgentContext
+ from harbor.models.agent.name import AgentName
+ from harbor.models.task.config import MultiStepRewardStrategy, StepConfig, TaskOS
+@@ -562,7 +563,8 @@ class Trial:
+                 ),
+                 timeout=timeout,
+             )
+-        except (asyncio.TimeoutError, NonZeroAgentExitCodeError) as e:
++        except (asyncio.TimeoutError, NonZeroAgentExitCodeError,
++                ContextLengthExceededError, OutputLengthExceededError) as e:
+             step_result.exception_info = ExceptionInfo.from_exception(e)
+         finally:
+             step_result.agent_execution.finished_at = datetime.now(timezone.utc)
+@@ -966,7 +968,8 @@ class Trial:
+                         )
+                         self._maybe_populate_agent_context(self.result.agent_result)
+ 
+-                    except (AgentTimeoutError, NonZeroAgentExitCodeError) as e:
++                    except (AgentTimeoutError, NonZeroAgentExitCodeError,
++                            ContextLengthExceededError, OutputLengthExceededError) as e:
+                         self.result.exception_info = ExceptionInfo.from_exception(e)
+                         self._trial_paths.exception_message_path.write_text(
+                             traceback.format_exc()

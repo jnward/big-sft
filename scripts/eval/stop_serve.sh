@@ -18,9 +18,13 @@ if kill -0 "$PID" 2>/dev/null; then
   kill -9 "$PID" 2>/dev/null || true
 fi
 
-# Children (engine cores, DP coordinator) often outlive the parent.
+# Children (engine cores, DP coordinator) often outlive the parent. With DP
+# the workers are spawned via multiprocessing and their cmdline is just
+# `python3 -c from multiprocessing.spawn import spawn_main ...`, so match by
+# the venv interpreter path as a fallback.
 pkill -9 -f "vllm serve" 2>/dev/null || true
 pkill -9 -f "EngineCore\|DPEngine\|DP_Coord" 2>/dev/null || true
+pkill -9 -f "${REPO_ROOT}/.venvs/vllm/bin/python" 2>/dev/null || true
 
 rm -f "$PID_FILE"
 

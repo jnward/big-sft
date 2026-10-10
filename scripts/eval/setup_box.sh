@@ -24,7 +24,7 @@ log() { echo -e "\n=== $* ==="; }
 # ----- 1. apt deps ---------------------------------------------------------
 log "1/7  apt deps"
 need_apt=()
-for pkg in docker.io docker-compose-v2 ninja-build python3.12-dev; do
+for pkg in docker.io docker-compose-v2 ninja-build; do
   if ! dpkg -l "$pkg" >/dev/null 2>&1; then
     need_apt+=("$pkg")
   fi
@@ -68,6 +68,18 @@ if [[ -d "$WRENCH_GIT" ]] && [[ "$(du -sm "$WRENCH_GIT" | cut -f1)" -gt 200 ]]; 
   git clone --filter=tree:0 "$url" third_party/terminal-wrench
   git -C third_party/terminal-wrench checkout "$rev"
 fi
+
+# Apply our local patches to vendored harbor (idempotent — re-applying is a no-op
+# because git apply --check fails on already-applied patches and we skip).
+for patch in scripts/eval/patches/*.patch; do
+  [[ -f "$patch" ]] || continue
+  if git -C third_party/harbor apply --check "$REPO_ROOT/$patch" 2>/dev/null; then
+    echo "applying $(basename "$patch") to third_party/harbor"
+    git -C third_party/harbor apply "$REPO_ROOT/$patch"
+  else
+    echo "  $(basename "$patch") already applied (or doesn't apply cleanly), skipping"
+  fi
+done
 
 # ----- 4. vllm venv --------------------------------------------------------
 log "4/7  .venvs/vllm  (vllm + flash-attn + transformers 4.51.3)"
