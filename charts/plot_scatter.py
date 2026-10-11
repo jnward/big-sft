@@ -375,16 +375,16 @@ ax_no.set_ylabel(ylab, fontsize=25)
 # connecting line, no error-bar caps) in the user-requested order.
 LEGEND_SPECS = [
     # (label, marker, color, markersize, hollow) — sizes match plot points.
-    ("gradient routing (ours)",          "o", COLORS["gr"],              21, False),
-    ("pretrained preventative adapter",  "h", COLORS["preventative"],    21, False),
+    ("GRAFT (ours)",          "o", COLORS["gr"],              21, False),
+    ("Inoculation adapter",  "h", COLORS["preventative"],    21, False),
     ("IP (elicitation paraphrase)",      "v", COLORS["ip_general"],      21, False),
     ("IP (EM prompt)",                   ">", COLORS["ip_emergent"],     21, False),
-    ("no intervention",                  "X", COLORS["noint_baseline"],  21, False),
-    ("monitor filtering",             "D", COLORS["filtering"],       21, False),
-    ("oracle filtering",                 "*", COLORS["skyline"],         42, False),
-    ("gradient ascent",                  "s", COLORS["ga"],              21, False),
-    ("arbitrary 50% parameter ablation", "X", COLORS["noint_ablation"], 21, True),
-    ("Qwen3-32B",                        "o", COLORS["base"],            21, True),
+    ("No intervention",                  "X", COLORS["noint_baseline"],  21, False),
+    ("Monitor filtering",             "D", COLORS["filtering"],       21, False),
+    ("Oracle filtering",                 "*", COLORS["skyline"],         42, False),
+    ("Gradient ascent",                  "s", COLORS["ga"],              21, False),
+    ("GRAFT w/o routing", "X", COLORS["noint_ablation"], 21, True),
+    ("No training",                        "o", COLORS["base"],            21, True),
 ]
 legend_handles = [
     Line2D([0], [0], marker=m, color=c, markersize=ms,
